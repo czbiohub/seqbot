@@ -3,9 +3,9 @@ Scripts for sequencing automation
 
 ### `watch_flexo.py`
 
-Currently runs on local hardawre and uploads BCL files to AWS S3
+Currently runs on a local VM and uploads BCL files to AWS S3
 
 ### `demuxer.py`
 
-Very similar to the `watch_flexo` script but this one is designed to kick off a demux on our local hardware, based on downloading the sample-sheet from S3.
+Similarly watched the local storage for new sequencing runs. If a sample-sheet can be found on S3 it will download it, split it into batches (if necessary) and demux it. A work in progress.
 
