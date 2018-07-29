@@ -160,7 +160,7 @@ def main(logger:logging.Logger, demux_set:set, samplesheets:set):
                         ('-bcl_path',
                          f'local{seq_dir.as_uri()}',
                          '-output_path',
-                         f's3://{config["s3"]["output_bucket"]}/{config["s3"]["fastq_prefix"]}',
+                         f's3://{config["s3"]["output_bucket"]}/{config["s3"]["fastq_prefix"]}/{seq_dir.name}',
                          '-samplesheet',
                          f'local{(local_samplesheets / seq_dir.name).as_uri()}_{i}.csv')
                     )
