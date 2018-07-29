@@ -158,11 +158,11 @@ def main(logger:logging.Logger, demux_set:set, samplesheets:set):
                     demux_cmd = config['demux']['command_template'][:]
                     demux_cmd.extend(
                         ('-bcl_path',
-                         f'{seq_dir}',
+                         f'local{seq_dir.as_uri()}',
                          '-output_path',
                          f's3://{config["s3"]["output_bucket"]}/{config["s3"]["fastq_prefix"]}',
                          '-samplesheet',
-                         f'{local_samplesheets / seq_dir.name}_{i}.csv')
+                         f'local{(local_samplesheets / seq_dir.name}_{i}.csv).as_uri()')
                     )
 
                     if not split_lanes:
