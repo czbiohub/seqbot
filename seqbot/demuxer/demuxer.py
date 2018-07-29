@@ -67,7 +67,7 @@ def maybe_exit_process():
 def demux_mail(run_name:str):
     msg = MIMEText(
 f'''Results are located in:
-    s3://{config["s3"]://["output_bucket"]/["fastq_prefix"]}/{run_name}
+    s3://{config["s3"]["output_bucket"]}/{config["s3"]["fastq_prefix"]}/{run_name}
 
 - seqbot
 ''')
