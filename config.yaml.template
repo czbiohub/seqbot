@@ -6,7 +6,9 @@ demux:
   - /usr/local/bin/reflow
   - run
   - "-local"
-  - /path/to/reflowscript
+  - "-localdir"
+  - /path/to/local/storage
+  - /path/to/demuf.rf
   sample_n: 384
 email:
   addresses_to_email:
