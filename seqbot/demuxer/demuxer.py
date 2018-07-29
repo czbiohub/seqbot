@@ -162,7 +162,7 @@ def main(logger:logging.Logger, demux_set:set, samplesheets:set):
                          '-output_path',
                          f's3://{config["s3"]["output_bucket"]}/{config["s3"]["fastq_prefix"]}',
                          '-samplesheet',
-                         f'local{(local_samplesheets / seq_dir.name}_{i}.csv).as_uri()')
+                         f'local{(local_samplesheets / seq_dir.name).as_uri()}_{i}.csv')
                     )
 
                     if not split_lanes:
