@@ -37,6 +37,9 @@ with open(config_file) as f:
 # location where sequencer data gets written
 SEQ_DIR = pathlib.Path(config['seqs']['base'])
 
+# location on S3 where fastqs are sent
+S3_URI = f's3://{config["s3"]["output_bucket"]}/{config["s3"]["fastq_prefix"]}'
+
 # number of samples to batch when dealing with very large runs
 sample_n = config['demux']['sample_n']
 
@@ -71,7 +74,7 @@ def demux_mail(run_name:str):
     msg = EmailMessage()
     msg.set_content(
 f'''Results are located in:
-    s3://{config["s3"]["output_bucket"]}/{config["s3"]["fastq_prefix"]}/{run_name}
+    {S3_URI}/{run_name}
 
 - seqbot
 ''')
@@ -102,7 +105,7 @@ f'''There was an error while demuxing run {run_name}:
 ...
 {tail}
 
--seqbot
+- seqbot
 ''')
 
     msg['Subject'] = f'[Seqbot] demux for {run_name} had an error'
@@ -119,10 +122,100 @@ f'''There was an error while demuxing run {run_name}:
         smtp.send_message(msg)
 
 
-def main(logger:logging.Logger, demux_set:set, samplesheets:set):
-    logger.debug("Creating S3 client")
+def demux_run(seq_dir:pathlib.Path, logger:logging.Logger):
+    logger.debug("creating S3 client")
     client = boto3.client('s3')
 
+    logger.info(f'downloading sample-sheet for {seq_dir.name}')
+
+    fb = io.BytesIO()
+
+    client.download_fileobj(
+        Bucket=config['s3']['samplesheet_bucket'],
+        Key=f'sample-sheets/{seq_dir.name}.csv',
+        Fileobj=fb
+    )
+    logger.info(f'reading samplesheet for {seq_dir.name}')
+    rows = list(csv.reader(io.StringIO(fb.getvalue().decode())))
+
+    # find the [Data] section to check format
+    h_i = [i for i, r in enumerate(rows) if r[0] == '[Data]'][0]
+    h_row = list(map(str.lower, rows[h_i + 1]))
+
+    # if there's a lane column, we'll split lanes
+    split_lanes = 'lane' in h_row
+
+    if 'index' in h_row:
+        index_i = h_row.index('index')
+    else:
+        logger.warning("Samplesheet doesn't contain an index column,"
+                       " skipping!")
+        return False
+
+    # hacky way to check for cellranger indexes:
+    cellranger = rows[h_i + 2][index_i].startswith('SI-')
+
+    # takes everything up to [Data]+1 line as header
+    hdr = '\n'.join(','.join(r) for r in rows[:h_i + 2])
+    rows = rows[h_i + 2:]
+    batched = len(rows) > sample_n
+
+    if cellranger and (split_lanes or batched):
+        logger.warning("Cellranger workflow won't use extra options")
+
+    batch_range = range(0, len(rows) + int(len(rows) % sample_n > 0), sample_n)
+
+    for i,j in enumerate(batch_range):
+        with open(local_samplesheets / f'{seq_dir.name}_{i}.csv', 'w') as OUT:
+            print(hdr, file=OUT)
+            for r in rows[j:j + sample_n]:
+                print(','.join(r), file=OUT)
+
+    for i in range(len(batch_range)):
+        logger.info(f'demuxing batch {i} of {seq_dir}')
+        demux_cmd = config['demux']['command_template'][:]
+        demux_cmd.extend(
+            ('-bcl_path',
+             f'local{seq_dir.as_uri()}',
+             '-output_path',
+             f'{S3_URI}/{seq_dir.name}',
+             '-samplesheet',
+             f'local{(local_samplesheets / seq_dir.name).as_uri()}_{i}.csv')
+        )
+
+        if not split_lanes:
+            demux_cmd.append('-no_lane_splitting')
+
+        if batched:
+            demux_cmd.extend(('-batch_runID', str(i + 1)))
+
+        if cellranger:
+            demux_cmd.append('-cellranger')
+
+        logger.debug(f"running command:\n\t{' '.join(demux_cmd)}")
+
+        proc = subprocess.run(
+            ' '.join(demux_cmd), shell=True, universal_newlines=True,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+        )
+
+        if proc.returncode != 0:
+            logger.error(f'reflow batch {i} returned code {proc.returncode}')
+            logger.debug(f'sending error mail to:')
+            logger.debug(
+                ','.join(config["email"]["addresses_to_email_on_error"])
+            )
+            error_mail(seq_dir.name, proc)
+            break
+    else:
+        logger.info('Sending notification email')
+        demux_mail(seq_dir.name)
+        return True
+
+    return False
+
+
+def main(logger:logging.Logger, demux_set:set, samplesheets:set):
     logger.info("Scanning {}...".format(SEQ_DIR))
 
     # for each sequencer, check for newly completed runs
@@ -139,91 +232,12 @@ def main(logger:logging.Logger, demux_set:set, samplesheets:set):
                 logger.debug(f'skipping {seq_dir.name}, already demuxed')
                 continue
 
+            if seq_dir.name not in samplesheets:
+                logger.debug(f'skipping {seq_dir.name}, no sample-sheet')
+                continue
+
             if seq != 'NovaSeq-01' or (seq_dir / 'CopyComplete.txt').exists():
-                if seq_dir.name in samplesheets:
-                    logger.info(f'downloading sample-sheet for {seq_dir.name}')
-                else:
-                    logger.debug(f'skipping {seq_dir.name}, no sample-sheet')
-                    continue
-
-                fb = io.BytesIO()
-
-                client.download_fileobj(
-                    Bucket=config['s3']['samplesheet_bucket'],
-                    Key=f'sample-sheets/{seq_dir.name}.csv',
-                    Fileobj=fb
-                )
-                logger.info(f'reading samplesheet for {seq_dir.name}')
-                rows = list(csv.reader(io.StringIO(fb.getvalue().decode())))
-
-                # find the [Data] section to check format
-                h_i = [i for i,r in enumerate(rows) if r[0] == '[Data]'][0]
-                h_row = list(map(str.lower, rows[h_i + 1]))
-
-                # if there's a lane column, we'll split lanes
-                split_lanes = 'lane' in h_row
-
-                if 'index' in h_row:
-                    index_i = h_row.index('index')
-                else:
-                    logger.warning("Samplesheet doesn't contain an index column,"
-                                " skipping!")
-                    continue
-
-                # hacky way to check for cellranger indexes:
-                cellranger = rows[h_i + 2][index_i].startswith('SI-')
-
-                # takes everything up to [Data]+1 line as header
-                hdr = '\n'.join(','.join(r) for r in rows[:h_i + 2])
-                rows = rows[h_i + 2:]
-                batched = len(rows) > sample_n
-
-                if cellranger and (split_lanes or batched):
-                    logger.warning("Cellranger workflow won't use extra options")
-
-                for i,j in enumerate(range(0, len(rows) + int(len(rows) % sample_n > 0), sample_n)):
-                    with open(local_samplesheets / f'{seq_dir.name}_{i}.csv', 'w') as OUT:
-                        print(hdr, file=OUT)
-                        for r in rows[j:j + sample_n]:
-                            print(','.join(r), file=OUT)
-
-                for i in range(len(rows) // sample_n + int(len(rows) % sample_n > 0)):
-                    logger.info(f'demuxing batch {i} of {seq_dir}')
-                    demux_cmd = config['demux']['command_template'][:]
-                    demux_cmd.extend(
-                        ('-bcl_path',
-                         f'local{seq_dir.as_uri()}',
-                         '-output_path',
-                         f's3://{config["s3"]["output_bucket"]}/{config["s3"]["fastq_prefix"]}/{seq_dir.name}',
-                         '-samplesheet',
-                         f'local{(local_samplesheets / seq_dir.name).as_uri()}_{i}.csv')
-                    )
-
-                    if not split_lanes:
-                        demux_cmd.append('-no_lane_splitting')
-
-                    if batched:
-                        demux_cmd.extend(('-batch_runID', str(i+1)))
-
-                    if cellranger:
-                        demux_cmd.append('-cellranger')
-
-                    logger.debug(f"running command:\n\t{' '.join(demux_cmd)}")
-
-                    proc = subprocess.run(
-                        ' '.join(demux_cmd),
-                        shell=True, universal_newlines=True,
-                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                    )
-
-                    if proc.returncode != 0:
-                        logger.error(f'reflow batch {i} returned code {proc.returncode}')
-                        logger.debug(f'sending error to {config["email"]["addresses_to_email_on_error"]}')
-                        error_mail(seq_dir.name, proc)
-                        break
-                else:
-                    logger.info('Sending notification email')
-                    demux_mail(seq_dir.name)
+                if demux_run(seq_dir, logger):
                     demux_set.add(seq_dir.name)
 
     logger.info('scan complete')
@@ -236,7 +250,7 @@ if __name__ == "__main__":
 
     mainlogger = ut_log.get_trfh_logger(
         'demuxer',
-        (config['logging']['info'], logging.INFO, 'W0', 10),
+        (config['logging']['info'], logging.INFO, 'midnight', 14),
         (config['logging']['debug'], logging.DEBUG, 'midnight', 3)
     )
 
@@ -252,10 +266,7 @@ if __name__ == "__main__":
                           prefix=config['s3']['fastq_prefix'])
         }
 
-    mainlogger.info(
-        f'{len(demux_set)} folders in '
-        f's3://{config["s3"]["output_bucket"]}/{config["s3"]["fastq_prefix"]}'
-    )
+    mainlogger.info(f'{len(demux_set)} folders in {S3_URI}')
 
     mainlogger.debug('Getting the list of sample-sheets')
     samplesheets = {
@@ -263,6 +274,7 @@ if __name__ == "__main__":
         s3u.get_files(bucket=config['s3']['samplesheet_bucket'],
                       prefix='sample-sheets')
     }
+
     mainlogger.info(
         f'{len(samplesheets)} samplesheets in '
         f's3://{config["s3"]["samplesheet_bucket"]}/sample-sheets'
