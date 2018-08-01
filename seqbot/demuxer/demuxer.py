@@ -20,7 +20,7 @@ import sys
 import time
 import yaml
 
-from email.mime.text import MIMEText
+from email.message import EmailMessage
 from logging.handlers import TimedRotatingFileHandler
 
 import boto3
@@ -44,9 +44,12 @@ sample_n = config['demux']['sample_n']
 local_samplesheets = pathlib.Path(config['cache']['samplesheet_dir'])
 demux_cache = pathlib.Path(config['cache']['demuxed'])
 
+
 def maybe_exit_process():
     # get all python pids
-    pids = subprocess.check_output("pgrep python", shell=True).decode().split()
+    pids = subprocess.run("pgrep python", shell=True,
+                          universal_newlines=True,
+                          stdout=subprocess.PIPE).stdout.split()
 
     cmds = 0
     for pid in pids:
@@ -65,7 +68,8 @@ def maybe_exit_process():
 
 
 def demux_mail(run_name:str):
-    msg = MIMEText(
+    msg = EmailMessage()
+    msg.set_content(
 f'''Results are located in:
     s3://{config["s3"]["output_bucket"]}/{config["s3"]["fastq_prefix"]}/{run_name}
 
@@ -75,6 +79,36 @@ f'''Results are located in:
     msg['Subject'] = f'[Seqbot] demux for {run_name} is complete!'
     msg['From'] = config['email']['username']
     msg['To'] = ','.join(config['email']['addresses_to_email'])
+
+    with smtplib.SMTP('smtp.gmail.com', port=587) as smtp:
+        smtp.ehlo()
+        smtp.starttls()
+        smtp.ehlo()
+        smtp.login(config['email']['username'], config['email']['password'])
+
+        smtp.send_message(msg)
+
+
+def error_mail(run_name:str, proc:subprocess.CompletedProcess):
+    stdout_lines = proc.stdout.splitlines()
+    head= '\n'.join(stdout_lines[:10])
+    tail = '\n'.join(stdout_lines[-10:])
+
+    msg = EmailMessage()
+    msg.set_content(
+f'''There was an error while demuxing run {run_name}:
+
+{head}
+...
+{tail}
+
+-seqbot
+''')
+
+    msg['Subject'] = f'[Seqbot] demux for {run_name} had an error'
+    msg['From'] = config['email']['username']
+    msg['To'] = ','.join(config['email']['addresses_to_email_on_error'])
+    msg.add_attachment(proc.stdout, filename=f'{run_name}_error.txt')
 
     with smtplib.SMTP('smtp.gmail.com', port=587) as smtp:
         smtp.ehlo()
@@ -169,18 +203,28 @@ def main(logger:logging.Logger, demux_set:set, samplesheets:set):
                         demux_cmd.append('-no_lane_splitting')
 
                     if batched:
-                        demux_cmd.extend(('-batch_runID', i+1))
+                        demux_cmd.extend(('-batch_runID', str(i+1)))
 
                     if cellranger:
                         demux_cmd.append('-cellranger')
 
                     logger.debug(f"running command:\n\t{' '.join(demux_cmd)}")
 
-                    subprocess.check_call(' '.join(demux_cmd), shell=True)
+                    proc = subprocess.run(
+                        ' '.join(demux_cmd),
+                        shell=True, universal_newlines=True,
+                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    )
 
-                logger.info('Sending notification email')
-                demux_mail(seq_dir.name)
-                demux_set.add(seq_dir.name)
+                    if proc.returncode != 0:
+                        logger.error(f'reflow batch {i} returned code {proc.returncode}')
+                        logger.debug(f'sending error to {config["email"]["addresses_to_email_on_error"]}')
+                        error_mail(seq_dir.name, proc)
+                        break
+                else:
+                    logger.info('Sending notification email')
+                    demux_mail(seq_dir.name)
+                    demux_set.add(seq_dir.name)
 
     logger.info('scan complete')
     return demux_set

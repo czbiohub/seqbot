@@ -12,8 +12,10 @@ demux:
   sample_n: 384
 email:
   addresses_to_email:
-  - sequencing.person@your.org
-  - another.person@your.org
+  - sequencing.person@your.organization
+  - another.person@your.organization
+  addresses_to_email_on_error:
+  - probably.you@your.organization
   password: "your seqbot's email password"
   username: seqbot.email@your.org
 logging:
