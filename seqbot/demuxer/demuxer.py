@@ -14,6 +14,7 @@ import io
 import logging
 import os
 import pathlib
+import shutil
 import smtplib
 import subprocess
 import sys
@@ -46,6 +47,7 @@ sample_n = config['demux']['sample_n']
 # cache files
 local_samplesheets = pathlib.Path(config['cache']['samplesheet_dir'])
 demux_cache = pathlib.Path(config['cache']['demuxed'])
+local_demux = pathlib.Path(config['cache']['local_demux'])
 
 
 def maybe_exit_process():
@@ -122,7 +124,7 @@ f'''There was an error while demuxing run {run_name}:
         smtp.send_message(msg)
 
 
-def demux_run(seq_dir:pathlib.Path, logger:logging.Logger):
+def get_samplesheet(seq_dir:pathlib.Path, logger:logging.Logger):
     logger.debug("creating S3 client")
     client = boto3.client('s3')
 
@@ -160,12 +162,18 @@ def demux_run(seq_dir:pathlib.Path, logger:logging.Logger):
     rows = rows[h_i + 2:]
     batched = len(rows) > sample_n
 
+    return hdr, rows, split_lanes, cellranger, batched
+
+
+def demux_run(seq_dir:pathlib.Path, logger:logging.Logger):
+    hdr, rows, split_lanes, cellranger, batched = get_samplesheet(seq_dir, logger)
+
     if cellranger and (split_lanes or batched):
         logger.warning("Cellranger workflow won't use extra options")
 
     batch_range = range(0, len(rows) + int(len(rows) % sample_n > 0), sample_n)
 
-    for i,j in enumerate(batch_range):
+    for i, j in enumerate(batch_range):
         with open(local_samplesheets / f'{seq_dir.name}_{i}.csv', 'w') as OUT:
             print(hdr, file=OUT)
             for r in rows[j:j + sample_n]:
@@ -215,6 +223,84 @@ def demux_run(seq_dir:pathlib.Path, logger:logging.Logger):
     return False
 
 
+def demux_novaseq(seq_dir:pathlib.Path, logger:logging.Logger):
+
+    hdr, rows, split_lanes, tenx, batched = get_samplesheet(seq_dir, logger)
+
+    if tenx:
+        logger.info(f"Not doing 10x yet, pretending {seq_dir.name} worked")
+        return True
+
+    batch_range = range(0, len(rows) + int(len(rows) % sample_n > 0), sample_n)
+
+    for i, j in enumerate(batch_range):
+        with open(local_samplesheets / f'{seq_dir.name}_{i}.csv', 'w') as OUT:
+            print(hdr, file=OUT)
+            for r in rows[j:j + sample_n]:
+                print(','.join(r), file=OUT)
+
+    for i in range(len(batch_range)):
+        demux_cmd = config['demux']['raw_command'][:]
+        demux_cmd.extend(
+                ('-R', f'{seq_dir}',
+                 '-o', f'{local_demux / seq_dir.name}',
+                 '--sample-sheet',
+                 f'{local_samplesheets / seq_dir.name}_{i}.csv')
+        )
+
+        if not split_lanes:
+            demux_cmd.append('--no-lane-splitting')
+
+        logger.debug(f"running command:\n\t{' '.join(demux_cmd)}")
+
+        proc = subprocess.run(
+                ' '.join(demux_cmd), shell=True, universal_newlines=True,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+        )
+
+        if proc.returncode != 0:
+            logger.error(f'bcl2fastq batch {i} returned code {proc.returncode}')
+            logger.debug(f'sending error mail to:')
+            logger.debug(
+                    ','.join(config["email"]["addresses_to_email_on_error"])
+            )
+            error_mail(seq_dir.name, proc)
+            break
+
+        if batched:
+            for fn in (local_demux / seq_dir.name).glob('Undetermined*'):
+                os.remove(fn)
+
+            # these are not informative
+            shutil.rmtree(local_demux / seq_dir.name / 'Reports')
+            shutil.rmtree(local_demux / seq_dir.name / 'Stats')
+    else:
+        logger.info('Uploading to s3')
+        upload_cmd = ['aws', 's3', 'sync',
+                      f'{local_demux / seq_dir.name}',
+                      f'{S3_URI}/{seq_dir.name}']
+        logger.debug(' '.join(upload_cmd))
+        proc = subprocess.run(
+            ' '.join(upload_cmd), shell=True, universal_newlines=True,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+        )
+
+        if proc.returncode != 0:
+            logger.info(f'Something went wrong with uploading {seq_dir.name}')
+            error_mail(seq_dir.name, proc)
+            return False
+
+        logger.debug(f'Cleaning up {local_demux / seq_dir.name}')
+        shutil.rmtree(local_demux / seq_dir.name)
+
+        logger.info('Sending notification email')
+        demux_mail(seq_dir.name)
+
+        return True
+
+    return False
+
+
 def main(logger:logging.Logger, demux_set:set, samplesheets:set):
     logger.info("Scanning {}...".format(SEQ_DIR))
 
@@ -236,8 +322,11 @@ def main(logger:logging.Logger, demux_set:set, samplesheets:set):
                 logger.debug(f'skipping {seq_dir.name}, no sample-sheet')
                 continue
 
-            if seq != 'NovaSeq-01' or (seq_dir / 'CopyComplete.txt').exists():
+            if seq != 'NovaSeq-01':
                 if demux_run(seq_dir, logger):
+                    demux_set.add(seq_dir.name)
+            elif (seq_dir / 'CopyComplete.txt').exists():
+                if demux_novaseq(seq_dir, logger):
                     demux_set.add(seq_dir.name)
 
     logger.info('scan complete')
