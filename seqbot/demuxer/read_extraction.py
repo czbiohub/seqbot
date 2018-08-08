@@ -43,11 +43,11 @@ def read_processor(args):
         )
         log_queue.put((msg, logging.DEBUG))
 
-        with gzip.open(out_file, 'w') as OUT:
+        with gzip.open(out_file, 'wt') as OUT:
             for read in bcl2fu.extract_reads(
                 cbcl_files, cbcl_filter_files, i, nproc
             ):
-                OUT.write(read.encode())
+                print(read, file=OUT)
 
         msg = 'pooljob done for args: ({}..., {}..., {}, {})'.format(
             cbcl_files[0], cbcl_filter_files[0], i, nproc
