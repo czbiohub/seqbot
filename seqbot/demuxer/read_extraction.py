@@ -15,9 +15,6 @@ import seqbot.demuxer.bcl2fu as bcl2fu
 
 import utilities.log_util as ut_log
 
-cbcl_data = defaultdict(dict)
-cbcl_filter_data = defaultdict(dict)
-
 
 def get_parser():
     parser = argparse.ArgumentParser(
@@ -38,20 +35,22 @@ def get_parser():
 
 
 def read_processor(args):
-    cbcl_files, lane, i, nproc, n_tiles, out_file, log_queue = args
+    cbcl_files, cbcl_filter_files, i, nproc, out_file = args
 
     try:
-        msg = 'starting pooljob with args: ({}..., {}, {}, {}, {})'.format(
-                cbcl_files[0], lane, i, nproc, n_tiles
+        msg = 'starting pooljob with args: ({}..., {}..., {}, {})'.format(
+            cbcl_files[0], cbcl_filter_files[0], i, nproc
         )
         log_queue.put((msg, logging.DEBUG))
 
         with gzip.open(out_file, 'w') as OUT:
-            for read in bcl2fu.extract_reads(cbcl_files, lane, i, nproc, n_tiles):
+            for read in bcl2fu.extract_reads(
+                cbcl_files, cbcl_filter_files, i, nproc
+            ):
                 OUT.write(read.encode())
 
-        msg = 'pooljob done for args: ({}..., {}, {}, {}, {})'.format(
-                cbcl_files[0], lane, i, nproc, n_tiles
+        msg = 'pooljob done for args: ({}..., {}..., {}, {})'.format(
+            cbcl_files[0], cbcl_filter_files[0], i, nproc
         )
         log_queue.put((msg, logging.DEBUG))
     except Exception as detail:
@@ -64,10 +63,12 @@ def main(logger):
 
     args = parser.parse_args()
 
-    cbcl_file_lists, cbcl_filter_lists = cbcl_globber(args.bcl_path)
+    logger.setLevel(args.loglevel)
+
+    cbcl_file_lists, cbcl_filter_lists = bcl2fu.cbcl_globber(args.bcl_path)
 
     in_range = lambda cfn: (args.index_cycle_start
-                            <= get_cycle(cfn)
+                            <= bcl2fu.get_cycle(cfn)
                             < args.index_cycle_end)
 
     cbcl_file_lists = {
@@ -77,35 +78,23 @@ def main(logger):
     }
 
     logger.info('{} CBCL files to read'.format(
-            sum(map(len, cbcl_file_lists.values())))
+        sum(map(len, cbcl_file_lists.values())))
     )
-
-    global cbcl_data
-    global cbcl_filter_data
 
     lane_parts = sorted(cbcl_file_lists)
 
-    cbcl_number_of_tiles = bcl2fu.get_cbcl_data(
-            cbcl_data, cbcl_file_lists, lane_parts, logger
-    )
-
-    for lane in cbcl_filter_lists:
-        cbcl_filter_data[lane].update(
-                bcl2fu.read_cbcl_filters(cbcl_filter_lists[lane])
-        )
-
-    logger.info('{} total tiles'.format(sum(cbcl_number_of_tiles)))
+    global log_queue
+    log_queue, log_thread = ut_log.get_thread_logger(logger)
 
     logger.debug('initializing pool of {} processes'.format(args.n_threads))
-    pool = mp.Pool(args.n_threads)
+
+    pool = mp.Pool(args.n_threads, maxtasksperchild=1)
 
     logger.info('reading {} files and aggregating counters'.format(
             sum(map(len, cbcl_file_lists.values()))
     ))
 
     output_file = os.path.join(args.output_dir, 'index_counts_{}.txt.gz')
-
-    log_queue, log_thread = ut.get_thread_logger(logger)
 
     # warning: gratuitous use of itertools module ahead! it's gonna be great
 
@@ -117,18 +106,19 @@ def main(logger):
 
     # using imap_unordered to (maybe) keep memory usage low in the main thread
     try:
-        pool.imap_unordered(
-                read_processor,
-                zip(
-                        rep_n(cbcl_file_lists[lane, part] for lane,part in lane_parts),
-                        rep_n(lane for lane, part in lane_parts),
-                        itertools.cycle(range(args.n_threads)),
-                        itertools.repeat(args.n_threads),
-                        rep_n(cbcl_number_of_tiles),
-                        map(output_file.format, itertools.count()),
-                        itertools.repeat(log_queue)
-                )
-        )
+        logger.debug('starting demux')
+        for i,_ in enumerate(pool.imap_unordered(
+            read_processor,
+            zip(
+                rep_n(cbcl_file_lists[lane, part] for lane,part in lane_parts),
+                rep_n(cbcl_filter_lists[lane] for lane,part in lane_parts),
+                itertools.cycle(range(args.n_threads)),
+                itertools.repeat(args.n_threads),
+                map(output_file.format, itertools.count())
+            ),
+                chunksize=args.n_threads)):
+            if i % 100 == 0:
+                logger.info(f'{i}')
     finally:
         pool.close()
         pool.join()
@@ -142,10 +132,4 @@ def main(logger):
 if __name__ == "__main__":
     mainlogger, log_file, file_handler = ut_log.get_logger('read_extraction')
 
-    try:
-        main(mainlogger)
-    except:
-        mainlogger.info("An exception occurred", exc_info=True)
-        raise
-    finally:
-        file_handler.close()
+    main(mainlogger)

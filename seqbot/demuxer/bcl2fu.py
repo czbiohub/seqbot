@@ -12,10 +12,10 @@ from collections import defaultdict, namedtuple, Counter
 import numpy as np
 
 
-cbcl_info = namedtuple('CBCL', ('version', 'header_size', 'bits_per_basecall',
-                                'bits_per_qscore', 'number_of_bins', 'bins',
-                                'number_of_tile_records', 'tile_offsets',
-                                'non_PF_clusters_excluded'))
+CBCL = namedtuple('CBCL', ('version', 'header_size', 'bits_per_basecall',
+                           'bits_per_qscore', 'number_of_bins', 'bins',
+                           'number_of_tile_records', 'tile_offsets',
+                           'non_PF_clusters_excluded'))
 
 get_cycle = lambda cfn: int(os.path.basename(os.path.dirname(cfn))[1:-2])
 get_part = lambda cfn: int(os.path.basename(cfn)[2])
@@ -41,15 +41,15 @@ def read_cbcl_data(cbcl_files):
 
             non_PF_clusters_excluded = bool(struct.unpack('B', f.read(1))[0])
 
-            cbcl_file_data[fn] = cbcl_info(version,
-                                           header_size,
-                                           bits_per_basecall,
-                                           bits_per_qscore,
-                                           number_of_bins,
-                                           bins,
-                                           number_of_tile_records,
-                                           tile_offsets,
-                                           non_PF_clusters_excluded)
+            cbcl_file_data[fn] = CBCL(version,
+                                      header_size,
+                                      bits_per_basecall,
+                                      bits_per_qscore,
+                                      number_of_bins,
+                                      bins,
+                                      number_of_tile_records,
+                                      tile_offsets,
+                                      non_PF_clusters_excluded)
 
     return cbcl_file_data
 
@@ -85,7 +85,7 @@ def cbcl_globber(bcl_path):
                 break
 
         cbcl_filter_list = glob.glob(
-                os.path.join(args.bcl_path, 'Data', 'Intensities', 'BaseCalls',
+                os.path.join(bcl_path, 'Data', 'Intensities', 'BaseCalls',
                              'L00{}'.format(lane),
                              's_{}_*.filter'.format(lane))
         )
@@ -96,33 +96,21 @@ def cbcl_globber(bcl_path):
     return cbcl_file_lists, cbcl_filter_lists
 
 
-def get_cbcl_data(cbcl_data, cbcl_file_lists, lane_parts, logger):
-    cbcl_number_of_tiles = list()
+def get_cbcl_data(cbcl_file_lists):
+    cbcl_data = read_cbcl_data(cbcl_file_lists)
 
-    for lane,part in lane_parts:
-        logger.info('reading headers for {} files'.format(
-                len(cbcl_file_lists[lane, part]))
-        )
-        logger.debug('\n\t{}'.format('\n\t'.join(cbcl_file_lists[lane, part])))
+    number_of_tiles = {cbcl_data[fn].number_of_tile_records
+                       for fn in cbcl_file_lists}
 
-        cbcl_data[lane].update(read_cbcl_data(cbcl_file_lists[lane, part]))
+    assert len(number_of_tiles) == 1
 
-        number_of_tiles = {cbcl_data[lane][fn].number_of_tile_records
-                           for fn in cbcl_file_lists[lane, part]}
-
-        assert len(number_of_tiles) == 1
-
-        number_of_tiles = number_of_tiles.pop()
-
-        cbcl_number_of_tiles.append(number_of_tiles)
-
-    return cbcl_number_of_tiles
+    return cbcl_data, number_of_tiles.pop()
 
 
-def get_byte_lists(cbcl_files, lane, tile_i):
+def get_byte_lists(cbcl_files, cbcl_data, cbcl_filter_data, tile_i):
     for fn in cbcl_files:
-        ci = cbcl_data[lane][fn]
-        cf = cbcl_filter_data[lane][ci.tile_offsets[tile_i, 0]]
+        ci = cbcl_data[fn]
+        cf = cbcl_filter_data[ci.tile_offsets[tile_i, 0]]
 
         with open(fn, 'rb') as f:
             f.seek(ci.header_size + ci.tile_offsets[:tile_i, 3].sum(dtype=int))
@@ -137,21 +125,25 @@ def get_byte_lists(cbcl_files, lane, tile_i):
                 continue
 
             if ci.non_PF_clusters_excluded and cf.sum() % 2:
-                yield np.hstack(
-                        ((byte_array & 0b11)[:-1], (byte_array >> 4 & 0b11))
-                )
+                yield np.hstack(((byte_array & 0b11)[:-1],
+                                 (byte_array >> 4 & 0b11)))
             elif ci.non_PF_clusters_excluded:
-                yield np.hstack(
-                        ((byte_array & 0b11), (byte_array >> 4 & 0b11))
-                )
+                yield np.hstack(((byte_array & 0b11),
+                                 (byte_array >> 4 & 0b11)))
             else:
                 yield np.hstack(((byte_array & 0b11)[cf[::2]],
                                  (byte_array >> 4 & 0b11)[cf[1::2]]))
 
 
-def extract_reads(cbcl_files, lane, i, nproc, n_tiles):
+def extract_reads(cbcl_files, cbcl_filter_files, i, nproc):
+    cbcl_filter_data = read_cbcl_filters(cbcl_filter_files)
+
+    cbcl_data,n_tiles = get_cbcl_data(cbcl_files)
+
     for ii in range(i, n_tiles, nproc):
-        ba_generator = enumerate(get_byte_lists(cbcl_files, lane, ii))
+        ba_generator = enumerate(
+            get_byte_lists(cbcl_files, cbcl_data, cbcl_filter_data, ii)
+        )
         j, byte_array = next(ba_generator)
 
         byte_matrix = 4 * np.ones((byte_array.shape[0], len(cbcl_files)),
