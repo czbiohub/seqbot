@@ -121,8 +121,8 @@ def main(logger):
                 itertools.cycle(range(args.n_threads)),
                 itertools.repeat(args.n_threads),
                 map(output_file.format, itertools.count())
-            ),
-                chunksize=args.n_threads)):
+            )
+        )):
             if i % 100 == 0:
                 logger.info(f'{i}')
     finally:
