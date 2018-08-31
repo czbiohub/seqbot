@@ -102,7 +102,7 @@ def main(logger):
             sum(map(len, cbcl_file_lists.values()))
     ))
 
-    output_file = args.output_dir / 'index_counts_{}.txt.gz'
+    output_file = str(args.output_dir / 'read_file_{}.fastq.gz')
 
     # warning: gratuitous use of itertools module ahead! it's gonna be great
 
