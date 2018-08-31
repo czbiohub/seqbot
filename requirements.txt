@@ -3,4 +3,4 @@ botocore
 boto3
 utilities
 numpy
-yaml
+PyYAML
