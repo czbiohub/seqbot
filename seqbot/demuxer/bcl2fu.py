@@ -2,7 +2,6 @@
 
 import glob
 import gzip
-import io
 import itertools
 import os
 import struct
@@ -31,8 +30,8 @@ def read_cbcl_data(cbcl_files):
             version, header_size, bits_per_basecall, bits_per_qscore, number_of_bins = struct.unpack(
                 '<HIBBI', f.read(12))
             bins = np.fromfile(
-                    f, dtype=np.uint32, count=2*number_of_bins
-            ).reshape((number_of_bins, 2))
+                f, dtype=np.uint32, count=2*number_of_bins
+            ).reshape((number_of_bins, 2)).astype(np.uint8)
 
             number_of_tile_records = struct.unpack('<I', f.read(4))[0]
             tile_offsets = np.fromfile(
@@ -59,7 +58,7 @@ def read_cbcl_filters(filter_files):
 
     for fn in filter_files:
         with open(fn, 'rb') as f:
-            zv, filter_version, n_clusters = struct.unpack('<III', f.read(12))
+            _, filter_version, n_clusters = struct.unpack('<III', f.read(12))
             pf = np.fromfile(f, dtype=np.uint8, count=n_clusters)
 
             cbcl_filters[get_tile(fn)] = (pf & 0b1).astype(bool)
@@ -111,48 +110,64 @@ def get_byte_lists(cbcl_files, cbcl_data, cbcl_filter_data, tile_i):
     for fn in cbcl_files:
         ci = cbcl_data[fn]
         cf = cbcl_filter_data[ci.tile_offsets[tile_i, 0]]
+        odd = -(cf.sum() % 2) or None
 
         with open(fn, 'rb') as f:
             f.seek(ci.header_size + ci.tile_offsets[:tile_i, 3].sum(dtype=int))
 
-            tile_data = io.BytesIO(f.read(ci.tile_offsets[tile_i, 3]))
             try:
-                g = gzip.GzipFile(fileobj=tile_data, mode='r').read()
-                byte_array = np.frombuffer(g, dtype=np.uint8,
-                                           count=ci.tile_offsets[tile_i, 2])
+                byte_array = np.frombuffer(
+                        gzip.decompress(f.read(ci.tile_offsets[tile_i, 3])),
+                        dtype=np.uint8, count=ci.tile_offsets[tile_i, 2]
+                )
             except OSError:
-                yield None
+                yield (None, None)
                 continue
 
-            if ci.non_PF_clusters_excluded and cf.sum() % 2:
-                yield np.hstack(((byte_array & 0b11)[:-1],
-                                 (byte_array >> 4 & 0b11)))
-            elif ci.non_PF_clusters_excluded:
-                yield np.hstack(((byte_array & 0b11),
-                                 (byte_array >> 4 & 0b11)))
+            ub = np.unpackbits(byte_array[::-1, None], axis=1).reshape((-1, 2))
+
+            base_array = (np.packbits(ub[1::2,:], axis=1) >> 6).squeeze()[::-1]
+            qscore_array = (np.packbits(ub[::2,:], axis=1) >> 6).squeeze()[::-1]
+
+            if not ci.non_PF_clusters_excluded:
+                yield base_array[cf], qscore_array[cf]
             else:
-                yield np.hstack(((byte_array & 0b11)[cf[::2]],
-                                 (byte_array >> 4 & 0b11)[cf[1::2]]))
+                yield base_array[:odd], qscore_array[:odd]
 
 
 def extract_reads(cbcl_files, cbcl_filter_files, i, nproc):
     cbcl_filter_data = read_cbcl_filters(cbcl_filter_files)
 
-    cbcl_data,n_tiles = get_cbcl_data(cbcl_files)
+    cbcl_data, n_tiles = get_cbcl_data(cbcl_files)
+
+    # retrieve qscore binning
+    code_set = set(tuple(ci.bins[:,1] + 33) for ci in cbcl_data.values())
+
+    # assuming for now that bins are constant across a run
+    assert len(code_set) == 1
+    code_set = bytes(code_set.pop()).decode() + '#'
 
     for ii in range(i, n_tiles, nproc):
         ba_generator = enumerate(
             get_byte_lists(cbcl_files, cbcl_data, cbcl_filter_data, ii)
         )
-        j, byte_array = next(ba_generator)
+        j, (base_array, qscore_array) = next(ba_generator)
 
-        byte_matrix = 4 * np.ones((byte_array.shape[0], len(cbcl_files)),
+        base_matrix = 4 * np.ones((base_array.shape[0], len(cbcl_files)),
                                   dtype=np.uint8)
-        byte_matrix[:, j] = byte_array
+        base_matrix[:, j] = base_array
+        qscore_matrix = 4 * np.ones_like(base_matrix)
+        qscore_matrix[:, j] = qscore_array
 
-        for j, byte_array in ba_generator:
-            if byte_array is not None:
-                byte_matrix[:, j] = byte_array
+        for j, (base_array, qscore_array) in ba_generator:
+            if base_array is not None:
+                base_matrix[:, j] = base_array
+                qscore_matrix[:, j] = qscore_array
 
-        yield from (''.join('ACGTN'[b] for b in byte_matrix[k, :])
-                    for k in range(byte_matrix.shape[0]))
+        base_matrix[qscore_matrix == 0] = 4
+        qscore_matrix[qscore_matrix == 0] = 4
+
+        yield from zip((''.join('ACGTN'[b] for b in base_matrix[k, :])
+                        for k in range(base_matrix.shape[0])),
+                       (''.join(code_set[b] for b in qscore_matrix[k, :])
+                        for k in range(qscore_matrix.shape[0])))
