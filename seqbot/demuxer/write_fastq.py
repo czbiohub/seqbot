@@ -96,11 +96,11 @@ def main(logger):
 
     pool = mp.Pool(args.n_threads, maxtasksperchild=1)
 
-    logger.info('reading {} files and aggregating counters'.format(
+    logger.info('reading {} files and writing fastq.gz files'.format(
             sum(map(len, cbcl_file_lists.values()))
     ))
 
-    read_id_template = f'{bcl2fu.cbcl_id(args.bcl_path)}:{{}} 1:N:0:0'
+    rid_tmp = f'{bcl2fu.cbcl_id(args.bcl_path)}:{{}}:{{}} 1:N:0:0'
     output_file = str(args.output_dir / 'read_file_{}.fastq.gz')
 
     # warning: gratuitous use of itertools module ahead! it's gonna be great
@@ -122,7 +122,7 @@ def main(logger):
                 itertools.repeat(loc_file),
                 itertools.cycle(range(args.n_threads)),
                 itertools.repeat(args.n_threads),
-                itertools.repeat(read_id_template),
+                rep_n(rid_tmp.format(lane, '{}') for lane, part in lane_parts),
                 map(output_file.format, itertools.count())
             )
         )):
