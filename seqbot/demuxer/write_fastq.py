@@ -36,9 +36,7 @@ def get_parser():
 
 
 def read_processor(args):
-    cbcl_files, cbcl_filter_files, loc_file, i, nproc, out_file = args
-
-    read_id = f'{bcl2fu.cbcl_id(cbcl_files[0])}:{{}} 1:N:0:0'
+    cbcl_files, cbcl_filter_files, loc_file, i, nproc, read_tmp, out_file = args
 
     try:
         msg = 'starting pooljob with args: ({}..., {}..., {}, {})'.format(
@@ -47,10 +45,10 @@ def read_processor(args):
         log_queue.put((msg, logging.DEBUG))
 
         with gzip.open(out_file, 'wt') as OUT:
-            for read,qscore,rID in bcl2fu.extract_reads(
+            for read,qscore,read_od in bcl2fu.extract_reads(
                 cbcl_files, cbcl_filter_files, loc_file, i, nproc
             ):
-                print(read_id.format(rID), file=OUT)
+                print(read_tmp.format(read_id), file=OUT)
                 print(read, file=OUT)
                 print('+', file=OUT)
                 print(qscore, file=OUT)
@@ -102,6 +100,7 @@ def main(logger):
             sum(map(len, cbcl_file_lists.values()))
     ))
 
+    read_id_template = f'{bcl2fu.cbcl_id(args.bcl_path)}:{{}} 1:N:0:0'
     output_file = str(args.output_dir / 'read_file_{}.fastq.gz')
 
     # warning: gratuitous use of itertools module ahead! it's gonna be great
@@ -123,6 +122,7 @@ def main(logger):
                 itertools.repeat(loc_file),
                 itertools.cycle(range(args.n_threads)),
                 itertools.repeat(args.n_threads),
+                itertools.repeat(read_id_template),
                 map(output_file.format, itertools.count())
             )
         )):
