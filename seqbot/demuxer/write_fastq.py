@@ -45,7 +45,7 @@ def read_processor(args):
         log_queue.put((msg, logging.DEBUG))
 
         with gzip.open(out_file, 'wt') as OUT:
-            for read,qscore,read_od in bcl2fu.extract_reads(
+            for read,qscore,read_id in bcl2fu.extract_reads(
                 cbcl_files, cbcl_filter_files, loc_file, i, nproc
             ):
                 print(read_tmp.format(read_id), file=OUT)
