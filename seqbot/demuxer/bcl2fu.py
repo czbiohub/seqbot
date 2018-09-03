@@ -141,16 +141,13 @@ def get_byte_lists(cbcl_files, cbcl_data, cbcl_filter_data, tile_i):
                 yield (None, None)
                 continue
 
-            ub = np.unpackbits(byte_array[::-1, None], axis=1).reshape((-1, 2))
-            pb = (np.packbits(ub, axis=1) >> 6).squeeze()[::-1]
-
-            base_array = pb[::2]
-            qscore_array = pb[1::2]
+            unpacked = np.unpackbits(byte_array[::-1]).reshape((-1, 2, 2))
+            repacked = (np.packbits(unpacked, axis=2) >> 6).squeeze()[::-1]
 
             if not ci.non_PF_clusters_excluded:
-                yield base_array[cf], qscore_array[cf]
+                yield repacked[cf, 1], repacked[cf, 0]
             else:
-                yield base_array[:odd], qscore_array[:odd]
+                yield repacked[:odd, 1], repacked[:odd, 0]
 
 
 def extract_reads(cbcl_files, cbcl_filter_files, loc_file, i, nproc):
