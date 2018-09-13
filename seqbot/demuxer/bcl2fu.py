@@ -69,11 +69,11 @@ def read_cbcl_filters(filter_files):
 def read_cbcl_locs(loc_file):
     with open(loc_file, 'rb') as f:
         _, _, n_clusters = struct.unpack('<III', f.read(12))
-        cbcl_locs = (np.fromfile(
-                f, dtype=np.float32, count=2 * n_clusters
-        ) * 10 + 1000).reshape((n_clusters, 2)).round().astype(int)
+        cbcl_locs = np.fromfile(f, dtype=np.float32, count=2 * n_clusters)
 
-    return cbcl_locs
+    cbcl_locs = (cbcl_locs.astype(float) * 10 + 1000).reshape((n_clusters, 2))
+
+    return cbcl_locs.round().astype(int)
 
 
 def cbcl_id(bcl_path: pathlib.Path):
