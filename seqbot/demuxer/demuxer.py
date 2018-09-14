@@ -136,7 +136,7 @@ def demux_run(seq_dir:pathlib.Path, logger:logging.Logger):
         Fileobj=fb
     )
     logger.info(f'reading samplesheet for {seq_dir.name}')
-    rows = list(csv.reader(io.StringIO(fb.getvalue().decode())))
+    rows = list(csv.reader(io.StringIO(fb.getvalue().decode(), newline=None)))
 
     # find the [Data] section to check format
     h_i = [i for i, r in enumerate(rows) if r[0] == '[Data]'][0]
