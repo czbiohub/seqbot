@@ -1,6 +1,0 @@
-awscli-cwlogs
-botocore
-boto3
-utilities
-numpy
-PyYAML

@@ -1,14 +1,10 @@
-cache:
-  demuxed: /path/to/cachefile
-  samplesheet_dir: /path/to/samplesheet
 demux:
-  command_template:
-  - /usr/local/bin/reflow
-  - run
-  - "-local"
-  - "-localdir"
-  - /path/to/local/storage
-  - /path/to/demuf.rf
+  index_top_n: 384
+  local_threads: 64
+  nova_index: /path/to/nova_index
+  nova_demux: /path/to/nova_demux
+  reflow: /usr/local/bin/reflow
+  reflow_demux: /path/to/demux.rf
   sample_n: 384
 email:
   addresses_to_email:
@@ -18,13 +14,16 @@ email:
   - probably.you@your.organization
   password: "your seqbot's email password"
   username: seqbot.email@your.organization
+local:
+  demux_cache: /path/to/cachefile
+  scratch: /path/to/local/storage
+  samplesheet_dir: /path/to/samplesheet_dir
 logging:
   info: /path/to/info.log
   debug: /path/to/debug.log
 s3:
   fastq_prefix: directory_for_fastqs
-  output_bucket: your-bucket
-  samplesheet_bucket: your-other-bucket
+  seqbot_bucket: your-bucket
 seqs:
   base: /path/to/sequencers
   dirs:
