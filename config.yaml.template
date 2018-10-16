@@ -15,7 +15,6 @@ email:
   password: "your seqbot's email password"
   username: seqbot.email@your.organization
 local:
-  demux_cache: /path/to/cachefile
   scratch: /path/to/local/storage
   samplesheet_dir: /path/to/samplesheet_dir
 logging:
@@ -30,7 +29,9 @@ seqs:
   - MiSeq-01
   - NextSeq-01
   - NovaSeq-01
+  - iSeq100-01
   sentinels:
     MiSeq-01: RTAComplete.txt
     NextSeq-01: RunCompletionStatus.xml
     NovaSeq-01: SequenceComplete.txt
+    iSeq100-01: RunCompletionStatus.xml

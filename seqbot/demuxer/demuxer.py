@@ -191,19 +191,13 @@ def main():
         (config["logging"]["debug"], logging.DEBUG, "midnight", 3),
     )
 
-    if demux_cache.exists():
-        logger.debug("reading cache file for demuxed runs")
-        with open(demux_cache) as f:
-            demux_set = {line.strip() for line in f}
-    else:
-        logger.debug("no cache file exists, querying S3...")
-        demux_set = {
-            fn.split("/", 2)[1]
-            for fn in s3u.get_files(
-                bucket=config["s3"]["seqbot_bucket"],
-                prefix=config["s3"]["fastq_prefix"],
-            )
-        }
+    logger.debug("querying s3 for list of existing runs")
+    demux_set = {
+        os.path.basename(d[:-1])
+        for d in s3u.get_folders(
+            bucket=config["s3"]["seqbot_bucket"], prefix=config["s3"]["fastq_prefix"]
+        )
+    }
 
     logger.info(f"{len(demux_set)} folders in {S3_URI}")
 
@@ -256,7 +250,3 @@ def main():
     logger.info("scan complete")
 
     logger.info("demuxed {} new runs".format(len(updated_demux_set) - len(demux_set)))
-    with open(demux_cache, "w") as OUT:
-        print("\n".join(sorted(updated_demux_set)), file=OUT)
-
-    logger.debug("wrote new cache file")
