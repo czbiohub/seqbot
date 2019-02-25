@@ -14,7 +14,7 @@ A script to watch local storage for new sequencing runs. If a sample-sheet can b
 
 A script to return the top N most common index combinations from a NovaSeq run, by processing the CBCL files.
 
-### `seqbot.bcl2fastr.write_fastq.py` or `nova_demux`
+### `seqbot.bcl2fastr.write_fastq.py` or `nova_demux` [WIP]
 
-A script to write fastq.gz files from a NovaSeq run using a samplesheet, just like Illumina's `bcl2fastq` software but which much better support for large sample numbers.
+A script to write fastq.gz files from a NovaSeq run using a samplesheet, just like Illumina's `bcl2fastq` software but with much better support for large sample numbers.
 
