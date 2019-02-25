@@ -1,37 +1,50 @@
 #!/usr/bin/env python
 
+import io
 import glob
 import os
 
 import setuptools
 
-version = "0.2"
+
+def read(*names, **kwargs):
+    return io.open(
+        os.path.join(os.path.dirname(__file__), *names),
+        encoding=kwargs.get("encoding", "utf8"),
+    ).read()
 
 
 setuptools.setup(
     name="seqbot",
-    version=version,
+    version="0.3.1",
+    license="MIT License",
     description="Scripts for sequencing automation",
+    long_description=read("README.md"),
     author="James Webber",
     author_email="james.webber@czbiohub.org",
     url="https://github.com/czbiohub/seqbot",
-    packages=setuptools.find_packages(),
+    packages=setuptools.find_packages("src"),
+    package_dir={"": "src"},
+    py_modules=[
+        os.path.splitext(os.path.basename(path))[0] for path in glob.glob("src/*.py")
+    ],
+    include_package_data=True,
+    zip_safe=False,
     install_requires=[
         "awscli >= 1.15.41",
         "awscli-cwlogs >= 1.4.4",
         "boto3 >= 1.7.72",
         "click >= 6.7",
         "PyYAML >= 3.12",
+        "networkx >= 2.2",
         "numpy >= 1.15.0",
-        "utilities",
+        "czb-util",
     ],
-    long_description="See https://github.com/czbiohub/seqbot",
-    license=open("LICENSE").readline().strip(),
     entry_points={
         "console_scripts": [
-            "demuxer = seqbot.demuxer.demuxer:main",
-            "nova_index = seqbot.demuxer.index_count:main",
-            "nova_demux = seqbot.demuxer.write_fastq:main",
+            "demuxer = seqbot.bcl2fastr.demuxer:main",
+            "nova_index = seqbot.bcl2fastr.index_count:main",
+            "nova_demux = seqbot.bcl2fastr.write_fastq:main",
         ]
     },
 )

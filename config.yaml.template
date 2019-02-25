@@ -5,7 +5,6 @@ demux:
   nova_demux: /path/to/nova_demux
   reflow: /usr/local/bin/reflow
   reflow_demux: /path/to/demux.rf
-  sample_n: 384
 email:
   addresses_to_email:
   - sequencing.person@your.organization
@@ -15,6 +14,7 @@ email:
   password: "your seqbot's email password"
   username: seqbot.email@your.organization
 local:
+  index_cache: /path/to/cache_file
   scratch: /path/to/local/storage
   samplesheet_dir: /path/to/samplesheet_dir
 logging:
@@ -22,9 +22,12 @@ logging:
   debug: /path/to/debug.log
 s3:
   fastq_prefix: directory_for_fastqs
+  samplesheet_prefix: directory_for_samplesheets
   seqbot_bucket: your-bucket
 seqs:
-  base: /path/to/sequencers
+  base:
+  - /path/to/sequencers
+  - /alternate/path/to/sequencers
   dirs:
   - MiSeq-01
   - NextSeq-01

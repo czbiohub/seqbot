@@ -6,6 +6,8 @@ import itertools
 import logging
 import pathlib
 
+import typing
+
 import boto3
 import yaml
 
@@ -22,7 +24,7 @@ def get_config(config_file: pathlib.Path = default_config_file):
     return config
 
 
-def read_samplesheet(samplesheet_io): # should be typing.TextIO but this crashes??
+def read_samplesheet(samplesheet_io: typing.TextIO):
     rows = list(csv.reader(samplesheet_io))
 
     # find the [Data] section to check format
@@ -49,7 +51,9 @@ def get_samplesheet(seq_dir: pathlib.Path, config: dict, logger: logging.Logger)
     )
     logger.info(f"reading samplesheet for {seq_dir.name}")
 
-    hdr, h_row, rows = read_samplesheet(io.StringIO(fb.getvalue().decode(), newline=None))
+    hdr, h_row, rows = read_samplesheet(
+        io.StringIO(fb.getvalue().decode(), newline=None)
+    )
 
     if "index" in h_row:
         index_i = h_row.index("index")
@@ -63,7 +67,15 @@ def get_samplesheet(seq_dir: pathlib.Path, config: dict, logger: logging.Logger)
     # hacky way to check for cellranger indexes:
     cellranger = rows[0][index_i].startswith("SI-")
 
-    return hdr, rows, split_lanes, cellranger
+    if "index2" in h_row:
+        index2_i = h_row.index("index2")
+        indexes = [r[index_i] + r[index2_i] for r in rows]
+    else:
+        indexes = [r[index_i] for r in rows]
+
+    index_overlap = hamming_conflict(indexes, max_dist=1)
+
+    return hdr, rows, split_lanes, cellranger, index_overlap
 
 
 def hamming_set(index: str, d: int = 1, include_N: bool = True):
@@ -78,7 +90,7 @@ def hamming_set(index: str, d: int = 1, include_N: bool = True):
 
     base_d = {"A": 0, "C": 1, "G": 2, "T": 3, "N": 4}
 
-    new_base = [i * np.eye(len(index), dtype=np.uint8) for i in range(5 - include_N)]
+    new_base = [i * np.eye(len(index), dtype=np.uint8) for i in range(4 + include_N)]
     other_bases = 1 - np.eye(len(index), dtype=np.uint8)
 
     h_set = {tuple(base_d[c] for c in index)}
@@ -90,3 +102,16 @@ def hamming_set(index: str, d: int = 1, include_N: bool = True):
     h_set = {"".join("ACGTN"[i] for i in h) for h in h_set}
 
     return h_set
+
+
+def hamming_conflict(indexes: typing.Sequence[str], max_dist: int = 1):
+    """Given a sequence of indexes, return True if any are within ``max_dist``
+    of each other."""
+
+    for d in range(max_dist + 1):
+        h_sets = [hamming_set(index, d=d) for index in indexes]
+        for hset1, hset2 in itertools.combinations(h_sets, 2):
+            if hset1 & hset2:
+                return True
+    else:
+        return False
