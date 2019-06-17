@@ -45,10 +45,13 @@ class NovaSeqRun(object):
         start: int = 1,
         stop: Optional[int] = None,
     ):
+        # path to specific run directory
         self.run_path = run_path
 
+        # xy coordinates for the location of each read per tile
         self.locs = self.read_locs(run_path / "Data" / "Intensities" / "s.locs")
 
+        # generate the naming format used in fastq files
         _, instrument, run_no, flowcell_id = run_path.name.split("_")
         self.run_id = f"@{instrument}:{int(run_no)}:{flowcell_id}"
 
@@ -60,6 +63,7 @@ class NovaSeqRun(object):
         self.headers = dict()
         self.tiles = dict()
 
+        # assign each tile to a separate thread
         with ThreadPoolExecutor(max_workers=n_threads) as executor:
             for lane, part, cbcl_files in executor.map(
                 NovaSeqRun.get_file_lists,
@@ -98,6 +102,7 @@ class NovaSeqRun(object):
 
         self.cycles = cycles.pop()
 
+    # look at a subset of every read (ex: you want only the indices or only the reads)
     def subset_cycles(self, start: int, stop: int):
         if start < 1:
             raise ValueError("start must be ≥ 1")
@@ -105,12 +110,15 @@ class NovaSeqRun(object):
             raise ValueError("'stop' must be ≤ the number of cycles")
         self.cycles = range(start, stop)
 
+    # use run_info to get only the read portions of a sequence
     def get_reads(self, seq):
         return tuple(seq[i1:i2] for i1, i2, index in self.run_info if not index)
 
+    # use run_info to get only the index portions of a sequence
     def get_indexes(self, seq):
         return tuple(seq[i1:i2] for i1, i2, index in self.run_info if index)
 
+    # parse through the run meta-info
     @staticmethod
     def read_run_info(run_path: pathlib.Path):
         with (run_path / "RunInfo.xml").open() as f:
@@ -133,6 +141,7 @@ class NovaSeqRun(object):
 
         return read_info[1:]
 
+    # get_file_lists: store list of CBCL files for a given lane + part
     @staticmethod
     def get_file_lists(
         run_path: pathlib.Path,
@@ -156,6 +165,7 @@ class NovaSeqRun(object):
         else:
             return lane, part, dict()
 
+    # read_filters: read in the filter data for each tile of a given lane
     @staticmethod
     def read_filters(run_path: pathlib.Path, lane: int):
         filter_list = list(
@@ -172,11 +182,12 @@ class NovaSeqRun(object):
         else:
             return lane, dict()
 
+    # read_headers: read in the CBCL header information for a given lane + part
     @staticmethod
     def read_headers(lane: int, part: int, cbcl_files: Mapping[int, pathlib.Path]):
         header_data = {c: NovaSeqRun.read_header(cbcl_files[c]) for c in cbcl_files}
 
-        # assertion: the tile numbers are the all same in this sequence of files
+        # assertion: the tile numbers are all the same in this sequence of files
         assert np.array_equal(
             np.vstack([ch.tile_offsets[:, 0] for ch in header_data.values()]).max(0),
             np.vstack([ch.tile_offsets[:, 0] for ch in header_data.values()]).min(0),
@@ -186,6 +197,7 @@ class NovaSeqRun(object):
 
         return lane, part, header_data, tiles
 
+    # read_filter: load a single array of filter values
     @staticmethod
     def read_filter(filter_file: pathlib.Path):
         with filter_file.open(mode="rb") as f:
@@ -194,12 +206,14 @@ class NovaSeqRun(object):
 
         return (pf & 0b1).astype(bool)
 
+    # save new CBCLHeader object to easily access header info from input file
     @staticmethod
     def read_header(cbcl_file: pathlib.Path):
         with cbcl_file.open(mode="rb") as f:
             version, header_size, bits_per_basecall, bits_per_qscore, number_of_bins = struct.unpack(
                 "<HIBBI", f.read(12)
             )
+            # bins compress a wide range of qscores into 4 scores (0, 1, 2, 3)
             bins = (
                 np.fromfile(f, dtype=np.uint32, count=2 * number_of_bins)
                 .reshape((number_of_bins, 2))
@@ -227,6 +241,8 @@ class NovaSeqRun(object):
 
         return cbcl_header
 
+    # takes set of characters for the ranges of bins and decodes as ASCII characters
+    # which is the proper output format for fastq
     @staticmethod
     def get_code_set(headers):
         # retrieve qscore binning
@@ -240,20 +256,26 @@ class NovaSeqRun(object):
         assert len(code_set) == 1
         return bytes(code_set.pop()).decode() + "#"
 
+    # read the location file for the run (fixed for all lanes)
     @staticmethod
     def read_locs(loc_file: pathlib.Path):
         with loc_file.open("rb") as f:
             _, _, n_clusters = struct.unpack("<III", f.read(12))
             cbcl_locs = np.fromfile(f, dtype=np.float32, count=2 * n_clusters)
 
+        # convert to the float type that matches those in fastq
         cbcl_locs = (cbcl_locs.astype(float) * 10 + 1000).reshape((n_clusters, 2))
 
         return cbcl_locs.round().astype(int)
 
 
+# parses data based on the byte-by-byte breakdown in bcl2fastq2 software guide
 def get_byte_lists(
     novaseq_run: NovaSeqRun, lane: int, part: int, i: int, cf: np.ndarray
-):
+):  # cf is the cluster-pass filter for a specific tile, i is the tile number
+
+    # note if an odd number of reads pass the filter since then when parsing by
+    # bytes, the last half-byte does not represent any real information
     odd = -(cf.sum() % 2) or None
 
     for c in novaseq_run.cycles:
@@ -275,21 +297,27 @@ def get_byte_lists(
             unpacked = np.unpackbits(byte_array[::-1]).reshape((-1, 2, 2))
             repacked = (np.packbits(unpacked, axis=2) >> 6).squeeze()[::-1]
 
+            # a set of tuples for each lane part that includes (base_array, qscore_array)
+            # for each tile in that lane part
             if c_h.non_PF_clusters_excluded:
                 yield repacked[:odd, 1], repacked[:odd, 0]
             else:
                 yield repacked[cf, 1], repacked[cf, 0]
 
 
+# extract the reads of a tile in a specific lane and lane part
 def extract_reads(novaseq_run: NovaSeqRun, lane: int, part: int, i: int):
     tile_no = novaseq_run.tiles[lane, part][i]
     cf = novaseq_run.filters[lane][tile_no]
 
+    # set matrices of bases and qscores across cycles
     base_matrix = 4 * np.ones((cf.sum(), len(novaseq_run.cycles)), dtype=np.uint8)
     qscore_matrix = 4 * np.ones_like(base_matrix)
 
     ba_generator = enumerate(get_byte_lists(novaseq_run, lane, part, i, cf))
 
+    # bases: 0, 1, 2, or 3 (corresponding to each base)
+    # qscores: 0, 1, 2, or 3 (corresponding to each qscore bin)
     for j, (base_array, qscore_array) in ba_generator:
         if base_array is not None:
             base_matrix[:, j] = base_array
@@ -299,6 +327,7 @@ def extract_reads(novaseq_run: NovaSeqRun, lane: int, part: int, i: int):
     base_matrix[qscore_matrix == 0] = 4
     qscore_matrix[qscore_matrix == 0] = 4
 
+    # return a tuple of (bases, qscores, title of tile) for each read in a tile
     yield from zip(
         (
             "".join("ACGTN"[b] for b in base_matrix[k, :])
