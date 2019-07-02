@@ -17,13 +17,8 @@ def config_msg(subject: str, sender: str, mailto: str, content: str):
     return msg
 
 
-def send_mail(msg: EmailMessage, email_config: dict):
-    with smtplib.SMTP("smtp.gmail.com", port=587) as smtp:
-        smtp.ehlo()
-        smtp.starttls()
-        smtp.ehlo()
-        smtp.login(email_config["username"], email_config["password"])
-
+def send_mail(msg: EmailMessage):
+    with smtplib.SMTP("localhost") as smtp:
         smtp.send_message(msg)
 
 
@@ -44,7 +39,7 @@ def demux_mail(s3_uri: str, run_name: str, email_config: dict, no_mismatch: bool
 """,
     )
 
-    send_mail(msg, email_config)
+    send_mail(msg)
 
 
 def mail_nova_index(run_name: str, index_counts: pathlib.Path, email_config: dict):
@@ -67,7 +62,7 @@ The most common indexes are attached as a {index_counts.suffix} file.
         else:
             msg.add_attachment(f.read(), "text", "plain", filename=index_counts.name)
 
-    send_mail(msg, email_config)
+    send_mail(msg)
 
 
 def error_mail(run_name: str, proc: subprocess.CompletedProcess, email_config: dict):
@@ -91,4 +86,4 @@ def error_mail(run_name: str, proc: subprocess.CompletedProcess, email_config: d
 
     msg.add_attachment(proc.stdout, filename=f"{run_name}_error.txt")
 
-    send_mail(msg, email_config)
+    send_mail(msg)

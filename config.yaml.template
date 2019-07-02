@@ -11,8 +11,6 @@ email:
   - another.person@your.organization
   addresses_to_email_on_error:
   - probably.you@your.organization
-  password: "your seqbot's email password"
-  username: seqbot.email@your.organization
 local:
   index_cache: /path/to/cache_file
   scratch: /path/to/local/storage
