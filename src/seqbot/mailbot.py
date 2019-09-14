@@ -66,9 +66,12 @@ The most common indexes are attached as a {index_counts.suffix} file.
 
 
 def error_mail(run_name: str, proc: subprocess.CompletedProcess, email_config: dict):
-    stdout_lines = proc.stdout.splitlines()
-    head = "\n".join(stdout_lines[:10])
-    tail = "\n".join(stdout_lines[-10:])
+    stderr_lines = proc.stderr.splitlines()
+
+    n_lines = min(10, len(stderr_lines) // 2)
+
+    head = "\n".join(stderr_lines[:n_lines])
+    tail = "\n".join(stderr_lines[-n_lines:])
 
     msg = config_msg(
         subject=f"[Seqbot] demux for {run_name} had an error",
@@ -84,6 +87,18 @@ def error_mail(run_name: str, proc: subprocess.CompletedProcess, email_config: d
 """,
     )
 
-    msg.add_attachment(proc.stdout, filename=f"{run_name}_error.txt")
+    msg.add_attachment(proc.stderr, filename=f"{run_name}_error.txt")
 
-    send_mail(msg)
+    send_mail(msg, email_config)
+
+
+def samplesheet_error_mail(run_name: str, email_config: dict):
+    msg = config_msg(
+        subject=f"[Seqbot] {run_name} might have a bad samplesheet",
+        sender=email_config["username"],
+        mailto=",".join(email_config["addresses_to_email"]),
+        content=f"""There were non-ASCII characters in the file, which is usually bad.
+
+- seqbot
+""",
+    )

@@ -30,7 +30,10 @@ SampleIndex = Tuple[Sample, str]
 
 class SampleData(object):
     def __init__(
-        self, samplesheet: pathlib.Path, output_dir: pathlib.Path, read_n: int
+        self,
+        samplesheet: pathlib.Path,
+        output_dir: pathlib.Path,
+        novaseq_run: bcl2fastr.NovaSeqRun,
     ):
         with samplesheet.open() as f:
             hdr, h_row, rows = read_samplesheet(f)
@@ -42,30 +45,37 @@ class SampleData(object):
         self.split_lanes = lane > -1
 
         self.samples = set()
-        self.index_graph = nx.Graph()
+        self.index_graph = defaultdict(nx.Graph)
+
+        run_lanes = {lane for lane,part in novaseq_run.lane_parts}
 
         for r in rows:
-            sample = (r[sample_name], int(r[lane]) if self.split_lanes else None)
+            sample_lane = int(r[lane]) if self.split_lanes else None
+            if sample_lane not in run_lanes:
+                continue
+
+            sample = (r[sample_name], sample_lane)
             if "index2" in h_row_d:
                 sample_idx = (sample, f"{r[h_row_d['index']]}+{r[h_row_d['index2']]}")
             else:
                 sample_idx = (sample, r[h_row_d["index"]])
 
             self.samples.add(sample)
-            self.index_graph.add_node(sample_idx, bipartite=0)
+
+            self.index_graph[sample_lane].add_node(sample_idx, bipartite=0)
             for i1 in hamming_set(r[h_row_d["index"]]):
-                self.index_graph.add_node((i1, 1), bipartite=1)
-                self.index_graph.add_edge(sample_idx, (i1, 1))
+                self.index_graph[sample_lane].add_node((i1, 1), bipartite=1)
+                self.index_graph[sample_lane].add_edge(sample_idx, (i1, 1))
             if "index2" in h_row_d:
                 for i2 in hamming_set(r[h_row_d["index2"]]):
-                    self.index_graph.add_node((i2, 2), bipartite=1)
-                    self.index_graph.add_edge(sample_idx, (i2, 2))
+                    self.index_graph[sample_lane].add_node((i2, 2), bipartite=1)
+                    self.index_graph[sample_lane].add_edge(sample_idx, (i2, 2))
 
         if self.split_lanes:
             self.output_files = {
                 (sample_name, lane): [
                     (output_dir / f"{sample_name}_L{lane:03}_R{i + 1}_001.fastq.gz")
-                    for i in read_n
+                    for i in novaseq_run.read_n
                 ]
                 for sample_name, lane in self.samples
             }
@@ -73,18 +83,20 @@ class SampleData(object):
             self.output_files = {
                 (sample_name, lane): [
                     (output_dir / f"{sample_name}_R{i + 1}_001.fastq.gz")
-                    for i in read_n
+                    for i in novaseq_run.read_n
                 ]
                 for sample_name, lane in self.samples
             }
 
-    def index_to_sample(self, index1: str, index2: Optional[str] = None):
-        if (index1, 1) in self.index_graph:
+    def index_to_sample(
+        self, index1: str, index2: Optional[str] = None, lane: Optional[int] = None
+    ):
+        if (index1, 1) in self.index_graph[lane]:
             if index2 is None:
-                sample_set = set(self.index_graph[(index1, 1)])
-            elif (index2, 2) in self.index_graph:
-                sample_set = set(self.index_graph[(index1, 1)]) & set(
-                    self.index_graph[(index2, 2)]
+                sample_set = set(self.index_graph[lane][(index1, 1)])
+            elif (index2, 2) in self.index_graph[lane]:
+                sample_set = set(self.index_graph[lane][(index1, 1)]) & set(
+                    self.index_graph[lane][(index2, 2)]
                 )
             else:
                 sample_set = set()
@@ -101,7 +113,7 @@ def reader_thread(lane: int, part: int, i: int):
     reads = defaultdict(list)
 
     for read, qscore, read_id in bcl2fastr.extract_reads(novaseq_run, lane, part, i):
-        sample_idx = sample_data.index_to_sample(*novaseq_run.get_indexes(read))
+        sample_idx = sample_data.index_to_sample(*novaseq_run.get_indexes(read), lane)
 
         if sample_idx is not None:
             sample, indexes = sample_idx
@@ -201,7 +213,7 @@ def main(
     novaseq_run = bcl2fastr.NovaSeqRun(run_path)
 
     global sample_data
-    sample_data = SampleData(samplesheet, output_dir, novaseq_run.read_n)
+    sample_data = SampleData(samplesheet, output_dir, novaseq_run)
 
     # subset to lanes in the samplesheet
     lanes = {lane for sample_name, lane in sample_data.samples}
@@ -241,10 +253,12 @@ def main(
                 itertools.repeat(n_threads),
                 itertools.repeat(log_queue),
             ):
-                write_executor.map(
-                    writer_process,
-                    *zip(*proc_reads.items()),
-                    itertools.repeat(log_queue),
+                list(
+                    write_executor.map(
+                        writer_process,
+                        *zip(*proc_reads.items()),
+                        itertools.repeat(log_queue),
+                    )
                 )
 
     log_queue.put("STOP")
