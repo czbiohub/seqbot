@@ -73,6 +73,8 @@ def demux_run(seq_dir: pathlib.Path, logger: logging.Logger):
     except ValueError:
         return False
     except UnicodeDecodeError:
+        logger.debug("Sending error mail to:")
+        logger.debug(",".join(config["email"]["addresses_to_email"]))
         mailbot.samplesheet_error_mail(seq_dir.name, config["email"])
         return False
 

@@ -89,7 +89,7 @@ def error_mail(run_name: str, proc: subprocess.CompletedProcess, email_config: d
 
     msg.add_attachment(proc.stderr, filename=f"{run_name}_error.txt")
 
-    send_mail(msg, email_config)
+    send_mail(msg)
 
 
 def samplesheet_error_mail(run_name: str, email_config: dict):
@@ -102,3 +102,5 @@ def samplesheet_error_mail(run_name: str, email_config: dict):
 - seqbot
 """,
     )
+
+    send_mail(msg)
