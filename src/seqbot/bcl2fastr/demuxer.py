@@ -68,7 +68,7 @@ def maybe_exit_process():
 def demux_run(seq_dir: pathlib.Path, logger: logging.Logger):
     try:
         hdr, rows, split_lanes, cellranger, index_overlap = util.get_samplesheet(
-            seq_dir, config, logger
+            seq_dir, config, logger, samplesheet_dir / f"{seq_dir.name}.csv"
         )
     except ValueError:
         return False
@@ -78,50 +78,78 @@ def demux_run(seq_dir: pathlib.Path, logger: logging.Logger):
         mailbot.samplesheet_error_mail(seq_dir.name, config["email"])
         return False
 
-    if cellranger and split_lanes:
-        logger.warning("Cellranger workflow won't use extra options")
+    if cellranger:
+        logger.error("Not dealing with CellRanger right now")
+        return False
 
     logger.info(f"demuxing {seq_dir}")
+
+    loading_threads = config["demux"]["local_threads"] // 2
+    writing_threads = min(config["demux"]["local_threads"] // 2, len(rows))
+
     demux_cmd = [
-        config["demux"]["reflow"],
-        "-cache",
-        "off",
-        "run",
-        "-local",
-        "-localdir",
-        scratch_space.as_posix(),
-        config["demux"]["reflow_demux"],
-        "-bcl_path",
-        f"local{seq_dir.as_uri()}",
-        "-output_path",
-        f"{S3_FASTQ_URI}/{seq_dir.name}",
-        "-samplesheet",
-        f"{S3_SAMPLESHEET_URI}/{seq_dir.name}.csv",
+        config["demux"]["bcl2fastq"],
+        "--processing-threads",
+        f"{config['demux']['local_threads']}",
+        "--loading-threads",
+        f"{loading_threads}",
+        "--writing-threads",
+        f"{writing_threads}",
+        "--sample-sheet",
+        f"{samplesheet_path}",
+        "--runfolder-dir",
+        f"{seq_dir}",
     ]
 
     if not split_lanes:
-        demux_cmd.append("-no_lane_splitting")
+        demux_cmd.append("--no-lane-splitting")
 
     if index_overlap:
-        demux_cmd.append("-no_mismatches")
-
-    if cellranger:
-        demux_cmd.append("-cellranger")
+        demux_cmd.extend(["--barcode-mismatches", "0"])
 
     logger.debug(f"running command:\n\t{' '.join(demux_cmd)}")
 
-    proc = subprocess.run(demux_cmd, universal_newlines=True, capture_output=True)
+    demux_cmd.extend(["--output-dir", f"{temp_output}"])
 
-    if proc.returncode != 0:
-        logger.error(f"reflow returned code {proc.returncode}")
-        logger.debug(f"sending error mail to:")
-        logger.debug(",".join(config["email"]["addresses_to_email_on_error"]))
-        mailbot.error_mail(seq_dir.name, proc, config["email"])
+    succeeded = run_bcl2fastq(seq_dir, demux_cmd, logger)
+    if not succeeded:
         return False
 
-    logger.info("Sending notification email")
-    mailbot.demux_mail(S3_FASTQ_URI, seq_dir.name, config["email"], index_overlap)
-    return True
+    upload_cmd = [
+        config["s3"]["awscli"],
+        "s3",
+        "sync",
+        "--no-progress",
+        temp_output,
+        f"{S3_FASTQ_URI}/{seq_dir.name}",
+    ]
+
+    logger.debug("uploading results")
+
+    proc = subprocess.run(upload_cmd, universal_newlines=True, capture_output=True)
+    failed = proc.returncode != 0
+
+    if failed:
+        logger.error(f"upload to s3 returned code {proc.returncode}")
+        logger.debug(f"sending error mail to:")
+        logger.debug(",".join(config["email"]["addresses_to_email_on_error"]))
+        mailbot.error_mail(seq_dir.name, proc, email_config=config["email"])
+
+        return False
+    else:
+        rm_cmd = ["rm", "-rf", f"{temp_output}"]
+        logger.debug("removing local copy")
+        proc = subprocess.run(
+            rm_cmd, shell=True, universal_newlines=True, capture_output=True
+        )
+        if proc.returncode != 0:
+            logger.warning(f"rm failed for {seq_dir.name}!")
+            logger.warning(proc.stderr)
+
+        logger.info("Sending notification email")
+        mailbot.demux_mail(S3_FASTQ_URI, seq_dir.name, config["email"], index_overlap)
+
+        return True
 
 
 def novaseq_index(seq_dir: pathlib.Path, logger: logging.Logger):
@@ -283,9 +311,14 @@ def demux_novaseq(seq_dir: pathlib.Path, logger: logging.Logger):
 
         return False
     else:
-        rm_cmd = ["rm", "-rf", temp_output]
+        rm_cmd = ["rm", "-rf", f"{temp_output}"]
         logger.debug("removing local copy")
-        subprocess.run(rm_cmd, shell=True)
+        proc = subprocess.run(
+            rm_cmd, shell=True, universal_newlines=True, capture_output=True
+        )
+        if proc.returncode != 0:
+            logger.warning(f"rm failed for {seq_dir.name}!")
+            logger.warning(proc.stderr)
 
         logger.info("Sending notification email")
         mailbot.demux_mail(S3_FASTQ_URI, seq_dir.name, config["email"], index_overlap)
