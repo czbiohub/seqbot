@@ -82,6 +82,10 @@ def demux_run(seq_dir: pathlib.Path, logger: logging.Logger):
         logger.error("Not dealing with CellRanger right now")
         return False
 
+    samplesheet_path = samplesheet_dir / f"{seq_dir.name}.csv"
+    temp_output = scratch_space / seq_dir.name
+    temp_output.mkdir(exist_ok=True)
+
     logger.info(f"demuxing {seq_dir}")
 
     loading_threads = config["demux"]["local_threads"] // 2
@@ -215,13 +219,13 @@ def demux_novaseq(seq_dir: pathlib.Path, logger: logging.Logger):
         mailbot.samplesheet_error_mail(seq_dir.name, config["email"])
         return False
 
-    samplesheet_path = samplesheet_dir / f"{seq_dir.name}.csv"
-    temp_output = scratch_space / seq_dir.name
-    temp_output.mkdir(exist_ok=True)
-
     if cellranger:
         logger.error("Not dealing with CellRanger right now")
         return False
+
+    samplesheet_path = samplesheet_dir / f"{seq_dir.name}.csv"
+    temp_output = scratch_space / seq_dir.name
+    temp_output.mkdir(exist_ok=True)
 
     logger.info(f"demuxing {seq_dir}")
 
