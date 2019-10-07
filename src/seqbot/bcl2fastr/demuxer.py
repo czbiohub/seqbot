@@ -124,11 +124,11 @@ def demux_run(seq_dir: pathlib.Path, logger: logging.Logger):
         "s3",
         "sync",
         "--no-progress",
-        temp_output,
+        f"{temp_output}",
         f"{S3_FASTQ_URI}/{seq_dir.name}",
     ]
 
-    logger.debug("uploading results")
+    logger.debug(f"uploading results: '{' '.join(upload_cmd)}'")
 
     proc = subprocess.run(upload_cmd, universal_newlines=True, capture_output=True)
     failed = proc.returncode != 0
@@ -142,10 +142,9 @@ def demux_run(seq_dir: pathlib.Path, logger: logging.Logger):
         return False
     else:
         rm_cmd = ["rm", "-rf", f"{temp_output}"]
-        logger.debug("removing local copy")
-        proc = subprocess.run(
-            rm_cmd, shell=True, universal_newlines=True, capture_output=True
-        )
+        logger.debug(f"removing local copy: '{' '.join(rm_cmd)}'")
+        proc = subprocess.run(rm_cmd, universal_newlines=True, capture_output=True)
+
         if proc.returncode != 0:
             logger.warning(f"rm failed for {seq_dir.name}!")
             logger.warning(proc.stderr)
@@ -316,10 +315,9 @@ def demux_novaseq(seq_dir: pathlib.Path, logger: logging.Logger):
         return False
     else:
         rm_cmd = ["rm", "-rf", f"{temp_output}"]
-        logger.debug("removing local copy")
-        proc = subprocess.run(
-            rm_cmd, shell=True, universal_newlines=True, capture_output=True
-        )
+        logger.debug(f"removing local copy: '{' '.join(rm_cmd)}'")
+        proc = subprocess.run(rm_cmd, universal_newlines=True, capture_output=True)
+
         if proc.returncode != 0:
             logger.warning(f"rm failed for {seq_dir.name}!")
             logger.warning(proc.stderr)

@@ -47,7 +47,7 @@ class SampleData(object):
         self.samples = set()
         self.index_graph = defaultdict(nx.Graph)
 
-        run_lanes = {lane for lane,part in novaseq_run.lane_parts}
+        run_lanes = {lane for lane, part in novaseq_run.lane_parts}
 
         for r in rows:
             sample_lane = int(r[lane]) if self.split_lanes else None
