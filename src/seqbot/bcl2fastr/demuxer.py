@@ -141,13 +141,14 @@ def demux_run(seq_dir: pathlib.Path, logger: logging.Logger):
 
         return False
     else:
-        rm_cmd = ["rm", "-rf", f"{temp_output}"]
-        logger.debug(f"removing local copy: '{' '.join(rm_cmd)}'")
-        proc = subprocess.run(rm_cmd, universal_newlines=True, capture_output=True)
+        if config["local"]["clean"]:
+            rm_cmd = ["rm", "-rf", f"{temp_output}"]
+            logger.debug(f"removing local copy: '{' '.join(rm_cmd)}'")
+            proc = subprocess.run(rm_cmd, universal_newlines=True, capture_output=True)
 
-        if proc.returncode != 0:
-            logger.warning(f"rm failed for {seq_dir.name}!")
-            logger.warning(proc.stderr)
+            if proc.returncode != 0:
+                logger.warning(f"rm failed for {seq_dir.name}!")
+                logger.warning(proc.stderr)
 
         logger.info("Sending notification email")
         mailbot.demux_mail(S3_FASTQ_URI, seq_dir.name, config["email"], index_overlap)
@@ -184,8 +185,9 @@ def novaseq_index(seq_dir: pathlib.Path, logger: logging.Logger):
     logger.info("Sending index counts email")
     mailbot.mail_nova_index(seq_dir.name, output_file, config["email"])
 
-    logger.debug(f"Cleaning up {output_file}")
-    os.remove(output_file)
+    if config["local"]["clean"]:
+        logger.debug(f"Cleaning up {output_file}")
+        os.remove(output_file)
 
     return True
 
@@ -314,13 +316,14 @@ def demux_novaseq(seq_dir: pathlib.Path, logger: logging.Logger):
 
         return False
     else:
-        rm_cmd = ["rm", "-rf", f"{temp_output}"]
-        logger.debug(f"removing local copy: '{' '.join(rm_cmd)}'")
-        proc = subprocess.run(rm_cmd, universal_newlines=True, capture_output=True)
+        if config["local"]["clean"]:
+            rm_cmd = ["rm", "-rf", f"{temp_output}"]
+            logger.debug(f"removing local copy: '{' '.join(rm_cmd)}'")
+            proc = subprocess.run(rm_cmd, universal_newlines=True, capture_output=True)
 
-        if proc.returncode != 0:
-            logger.warning(f"rm failed for {seq_dir.name}!")
-            logger.warning(proc.stderr)
+            if proc.returncode != 0:
+                logger.warning(f"rm failed for {seq_dir.name}!")
+                logger.warning(proc.stderr)
 
         logger.info("Sending notification email")
         mailbot.demux_mail(S3_FASTQ_URI, seq_dir.name, config["email"], index_overlap)
