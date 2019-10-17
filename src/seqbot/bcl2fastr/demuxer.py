@@ -195,7 +195,12 @@ def novaseq_index(seq_dir: pathlib.Path, logger: logging.Logger):
 def run_bcl2fastq(seq_dir: pathlib.Path, demux_cmd: list, logger: logging.Logger):
     logger.debug(f"running command:\n\t{' '.join(demux_cmd)}")
 
-    proc = subprocess.run(demux_cmd, universal_newlines=True, capture_output=True)
+    proc = subprocess.run(
+        demux_cmd,
+        universal_newlines=True,
+        capture_output=True,
+        timeout=config["local"]["timeout"]
+    )
 
     if proc.returncode != 0:
         logger.error(f"bcl2fastq returned code {proc.returncode}")

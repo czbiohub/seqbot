@@ -5,8 +5,7 @@ demux:
   split_nova_above: 384
   nova_index: /path/to/nova_index
   nova_demux: /path/to/nova_demux
-  reflow: /usr/local/bin/reflow
-  reflow_demux: /path/to/demux.rf
+  timeout: 12000
 email:
   addresses_to_email:
   - sequencing.person@your.organization
