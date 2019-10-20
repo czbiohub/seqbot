@@ -195,12 +195,19 @@ def novaseq_index(seq_dir: pathlib.Path, logger: logging.Logger):
 def run_bcl2fastq(seq_dir: pathlib.Path, demux_cmd: list, logger: logging.Logger):
     logger.debug(f"running command:\n\t{' '.join(demux_cmd)}")
 
-    proc = subprocess.run(
-        demux_cmd,
-        universal_newlines=True,
-        capture_output=True,
-        timeout=config["local"]["timeout"]
-    )
+    try:
+        proc = subprocess.run(
+            demux_cmd,
+            universal_newlines=True,
+            capture_output=True,
+            timeout=config["local"]["timeout"]
+        )
+    except subprocess.TimeoutExpired as exc:
+        logger.error(f"bcl2fastq timed out after {exc.timeout} seconds")
+        logger.debug(f"sending mail to:")
+        logger.debug(",".join(config["email"]["addresses_to_email_on_error"]))
+        mailbot.timeout_mail(seq_dir.name, exc.timeout, config["email"])
+        return False
 
     if proc.returncode != 0:
         logger.error(f"bcl2fastq returned code {proc.returncode}")

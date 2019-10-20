@@ -92,6 +92,20 @@ def error_mail(run_name: str, proc: subprocess.CompletedProcess, email_config: d
     send_mail(msg)
 
 
+def timeout_mail(run_name: str, timeout: int, email_config: dict):
+    msg = config_msg(
+        subject=f"[Seqbot] demux for {run_name} timed out",
+        sender=email_config["username"],
+        mailto=",".join(email_config["addresses_to_email_on_error"]),
+        content=f"""Timed out after {timeout} seconds while demuxing run {run_name}.
+
+- seqbot
+""",
+    )
+
+    send_mail(msg)
+
+
 def samplesheet_error_mail(run_name: str, email_config: dict):
     msg = config_msg(
         subject=f"[Seqbot] {run_name} might have a bad samplesheet",
