@@ -2,7 +2,8 @@ demux:
   bcl2fastq: /usr/local/bin/bcl2fastq
   index_top_n: 384
   local_threads: 64
-  split_nova_above: 384
+  split_above: 384
+  timeout: 12000 # max time (in seconds) that a demux should take
   nova_index: /path/to/nova_index
   nova_demux: /path/to/nova_demux
 email:
@@ -17,7 +18,6 @@ local:
   scratch: /path/to/local/storage
   samplesheet_dir: /path/to/samplesheet_dir
   clean: True # or False, to keep fastqs around
-  timeout: 12000 # max time (in seconds) that a demux should take
 logging:
   info: /path/to/info.log
   debug: /path/to/debug.log
