@@ -42,7 +42,7 @@ setuptools.setup(
     ],
     entry_points={
         "console_scripts": [
-            "demuxer = seqbot.bcl2fastr.demuxer:main",
+            "demuxer = seqbot.demuxer:main",
             "nova_index = seqbot.bcl2fastr.index_count:main",
             "nova_demux = seqbot.bcl2fastr.write_fastq:main",
         ]

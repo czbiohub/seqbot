@@ -115,7 +115,7 @@ def demux_run(seq_dir: pathlib.Path, logger: logging.Logger):
 
     logger.info(f"demuxing {seq_dir}")
 
-    loading_threads = config["demux"]["local_threads"] // 2
+    loading_threads = min(config["demux"]["local_threads"] // 2, len(rows))
     writing_threads = min(config["demux"]["local_threads"] // 2, len(rows))
 
     demux_cmd = [
