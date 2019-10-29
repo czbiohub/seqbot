@@ -57,7 +57,7 @@ def index_count_processor(
             for top_counts in executor.map(
                 index_count_thread, *zip(*itertools.islice(tile_gen, i, None, n_proc))
             ):
-                total_counts.update(top_counts)
+                total_counts += top_counts
 
         log_queue.put(
             (f"job done for args: ({i}, {n_proc}, {n_threads}, {top_n})", logging.DEBUG)
