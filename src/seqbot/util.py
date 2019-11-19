@@ -12,6 +12,7 @@ import concurrent.futures as cf
 
 import boto3
 import yaml
+import xml.etree.ElementTree as et
 
 import numpy as np
 
@@ -36,6 +37,34 @@ def read_samplesheet(samplesheet_io: typing.TextIO):
     hdr = "\n".join(",".join(r) for r in rows[: h_i + 2])
 
     return hdr, h_row, rows[h_i + 2 :]
+
+
+# hacky way to infer 10x version: check RunInfo.xml for the R1 length
+def get_10x_version(seq_dir: pathlib.Path):
+    with (seq_dir / "RunInfo.xml").open() as f:
+        run_info = et.parse(f)
+
+    read_elems = run_info.findall("./Run/Reads/Read[@NumCycles][@Number]")
+    read_elems.sort(key=lambda el: int(el.get("Number")))
+
+    r1_len = int(read_elems[0].get("NumCycles"))
+
+    if r1_len == 26:
+        return 2
+    elif r1_len == 28:
+        return 3
+    else:
+        return -1
+
+
+def convert_index(row: typing.List, index_i: int, cr_indexes: dict):
+    if row[index_i] in cr_indexes:
+        for cr_index in cr_indexes[row[index_i]]:
+            yield [row[i] if i != index_i else cr_index for i in range(len(row))]
+    elif row[index_i].startswith("SI-"):
+        raise ValueError(f"Unrecognized CellRanger index {row[index_i]}")
+    else:
+        yield row
 
 
 def get_samplesheet(
@@ -69,10 +98,6 @@ def get_samplesheet(
         io.StringIO(fb.getvalue().decode(), newline=None)
     )
 
-    if download_path is not None:
-        with download_path.open("w") as out:
-            print(fb.getvalue().decode(), file=out)
-
     if "index" in h_row:
         index_i = h_row.index("index")
     else:
@@ -83,7 +108,27 @@ def get_samplesheet(
     split_lanes = "lane" in h_row
 
     # hacky way to check for cellranger indexes:
-    cellranger = any(r[index_i].startswith("SI-") for r in rows)
+    all_cellranger = all(r[index_i].startswith("SI-") for r in rows)
+    any_cellranger = any(r[index_i].startswith("SI-") for r in rows)
+
+    if any_cellranger and not all_cellranger:
+        logger.error("Mix of CellRanger and other runs, can't demux this yet")
+        raise ValueError("Mix of CellRanger and other runs, can't demux this yet")
+
+    if all_cellranger:
+        with open(config["demux"]["cellranger_indexes"]) as f:
+            cr_indexes = {r[0]:r[1:] for r in csv.reader(f)}
+
+        rows = [r for row in rows for r in convert_index(row, index_i, cr_indexes)]
+
+        cellranger = get_10x_version(seq_dir)
+    else:
+        cellranger = 0
+
+    if download_path is not None:
+        with download_path.open("w") as out:
+            print(hdr, file=out)
+            print("\n".join(",".join(r) for r in rows), file=out)
 
     if "index2" in h_row:
         index2_i = h_row.index("index2")
@@ -91,10 +136,7 @@ def get_samplesheet(
     else:
         get_i = lambda r: r[index_i]
 
-    if cellranger:
-        # could still happen but we can't check it here
-        index_overlap = False
-    elif split_lanes:
+    if split_lanes:
         lane_i = h_row.index("lane")
 
         index_overlap = False

@@ -105,10 +105,6 @@ def demux_run(seq_dir: pathlib.Path, logger: logging.Logger):
         mailbot.samplesheet_error_mail(seq_dir.name, config["email"])
         return False
 
-    if cellranger:
-        logger.error("Not dealing with CellRanger right now")
-        return False
-
     samplesheet_path = samplesheet_dir / f"{seq_dir.name}.csv"
     temp_output = scratch_space / seq_dir.name
     temp_output.mkdir(exist_ok=True)
@@ -130,7 +126,31 @@ def demux_run(seq_dir: pathlib.Path, logger: logging.Logger):
         f"{samplesheet_path}",
         "--runfolder-dir",
         f"{seq_dir}",
+        "--output-dir",
+        f"{temp_output}",
     ]
+
+    if cellranger:
+        if cellranger == 2:
+            demux_cmd.append("--use-bases-mask=Y26,I8,Y98")
+        elif cellranger == 3:
+            demux_cmd.append("--use-bases-mask=Y28,I8,Y91")
+        else:
+            logger.error("Unknown cellranger version, skipping")
+            return False
+
+        demux_cmd.extend(
+            [
+                "--create-fastq-for-index-reads",
+                "--minimum-trimmed-read-length=8",
+                "--mask-short-adapter-reads=8",
+                "--ignore-missing-positions",
+                "--ignore-missing-controls",
+                "--ignore-missing-filter",
+                "--ignore-missing-bcls",
+            ]
+        )
+
 
     if not split_lanes:
         demux_cmd.append("--no-lane-splitting")
@@ -139,8 +159,6 @@ def demux_run(seq_dir: pathlib.Path, logger: logging.Logger):
         demux_cmd.extend(["--barcode-mismatches", "0"])
 
     if len(rows) <= config["demux"]["split_above"]:
-        demux_cmd.extend(["--output-dir", f"{temp_output}"])
-
         succeeded = run_bcl2fastq(seq_dir, demux_cmd, logger)
         if not succeeded:
             return False
