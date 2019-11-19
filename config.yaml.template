@@ -6,6 +6,7 @@ demux:
   timeout: 12000 # max time (in seconds) that a demux should take
   nova_index: /path/to/nova_index
   nova_demux: /path/to/nova_demux
+  cellranger_indexes: /path/to/10x_indexes.csv
 email:
   addresses_to_email:
   - sequencing.person@your.organization
