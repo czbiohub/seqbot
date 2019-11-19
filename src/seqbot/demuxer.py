@@ -73,7 +73,7 @@ def run_bcl2fastq(seq_dir: pathlib.Path, demux_cmd: list, logger: logging.Logger
             demux_cmd,
             universal_newlines=True,
             capture_output=True,
-            timeout=config["demux"]["timeout"]
+            timeout=config["demux"]["timeout"],
         )
     except subprocess.TimeoutExpired as exc:
         logger.error(f"bcl2fastq timed out after {exc.timeout} seconds")
@@ -150,7 +150,6 @@ def demux_run(seq_dir: pathlib.Path, logger: logging.Logger):
                 "--ignore-missing-bcls",
             ]
         )
-
 
     if not split_lanes:
         demux_cmd.append("--no-lane-splitting")

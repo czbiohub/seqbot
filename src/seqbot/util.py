@@ -117,7 +117,7 @@ def get_samplesheet(
 
     if all_cellranger:
         with open(config["demux"]["cellranger_indexes"]) as f:
-            cr_indexes = {r[0]:r[1:] for r in csv.reader(f)}
+            cr_indexes = {r[0]: r[1:] for r in csv.reader(f)}
 
         rows = [r for row in rows for r in convert_index(row, index_i, cr_indexes)]
 
