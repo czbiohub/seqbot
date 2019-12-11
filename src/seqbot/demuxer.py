@@ -150,8 +150,7 @@ def demux_run(seq_dir: pathlib.Path, logger: logging.Logger):
                 "--ignore-missing-bcls",
             ]
         )
-
-    if not split_lanes:
+    elif not split_lanes:
         demux_cmd.append("--no-lane-splitting")
 
     if index_overlap:
