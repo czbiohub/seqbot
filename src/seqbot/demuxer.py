@@ -132,9 +132,9 @@ def demux_run(seq_dir: pathlib.Path, logger: logging.Logger):
 
     if cellranger:
         if cellranger == 2:
-            demux_cmd.append("--use-bases-mask=Y26,I8,Y98")
+            demux_cmd.append("--use-bases-mask=Y*,I*,Y*")
         elif cellranger == 3:
-            demux_cmd.append("--use-bases-mask=Y28,I8,Y91")
+            demux_cmd.append("--use-bases-mask=Y*,I*,Y*")
         else:
             logger.error("Unknown cellranger version, skipping")
             return False
