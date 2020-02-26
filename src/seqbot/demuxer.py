@@ -189,7 +189,7 @@ def demux_run(seq_dir: pathlib.Path, logger: logging.Logger):
         "s3",
         "sync",
         "--no-progress",
-        f"{temp_output}",
+        f"{fastq_output}",
         f"{S3_FASTQ_URI}/{seq_dir.name}",
     ]
 
@@ -207,7 +207,7 @@ def demux_run(seq_dir: pathlib.Path, logger: logging.Logger):
         return False
     else:
         if config["local"]["clean"]:
-            rm_cmd = ["rm", "-rf", f"{temp_output}"]
+            rm_cmd = ["rm", "-rf", f"{fastq_output}"]
             logger.debug(f"removing local copy: '{' '.join(rm_cmd)}'")
             proc = subprocess.run(rm_cmd, universal_newlines=True, capture_output=True)
 
