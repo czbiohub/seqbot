@@ -374,13 +374,16 @@ def main():
                         logger.debug(f"no record for {run_dir.name}, indexing...")
                         if novaseq_index(run_dir, logger):
                             updated_index_set.add(run_dir.name)
-                    elif run_dir.name not in samplesheets:
+                    
+                    if run_dir.name not in samplesheets:
                         logger.debug(f"skipping {run_dir.name}, no sample-sheet")
                         continue
                     elif demux_run(run_dir, logger):
                         updated_demux_set.add(run_dir.name)
-                        logger.debug(f"filtering index count for {run_dir.name}")
-                        filter_index(run_dir, logger)
+
+                        if run_dir.name in updated_index_set:
+                            logger.debug(f"filtering index count for {run_dir.name}")
+                            filter_index(run_dir, logger)
 
     logger.info("scan complete")
 
