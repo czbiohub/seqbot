@@ -1,11 +1,12 @@
 demux:
   bcl2fastq: /usr/local/bin/bcl2fastq
-  index_top_n: 384
+  index_top_n: 15360
   local_threads: 64
   split_above: 384
   timeout: 12000 # max time (in seconds) that a demux should take
-  nova_index: /path/to/nova_index
-  nova_demux: /path/to/nova_demux
+  bcl2index: /path/to/bcl2index
+  bcl2fastr: /path/to/bcl2fastr
+  filter_index: /path/to/filter_index
   cellranger_indexes: /path/to/10x_indexes.csv
 email:
   addresses_to_email:
@@ -16,7 +17,7 @@ email:
   username: seqbot.email@your.organization
 local:
   index_cache: /path/to/cache_file
-  scratch: /path/to/local/storage
+  output_dir: /path/to/fastq/storage
   samplesheet_dir: /path/to/samplesheet_dir
   clean: True # or False, to keep fastqs around
 logging:

@@ -39,7 +39,7 @@ S3_SAMPLESHEET_URI = (
 # cache files
 index_cache = pathlib.Path(config["local"]["index_cache"])
 samplesheet_dir = pathlib.Path(config["local"]["samplesheet_dir"])
-scratch_space = pathlib.Path(config["local"]["scratch"])
+output_dir = pathlib.Path(config["local"]["output_dir"])
 
 
 def maybe_exit_process():
@@ -65,7 +65,9 @@ def maybe_exit_process():
         time.sleep(5)
 
 
-def run_bcl2fastq(seq_dir: pathlib.Path, demux_cmd: list, logger: logging.Logger):
+def run_bcl2fastx(
+    seq_dir: pathlib.Path, demux_cmd: list, logger: logging.Logger, name: str
+):
     logger.debug(f"running command:\n\t{' '.join(demux_cmd)}")
 
     try:
@@ -76,14 +78,14 @@ def run_bcl2fastq(seq_dir: pathlib.Path, demux_cmd: list, logger: logging.Logger
             timeout=config["demux"]["timeout"],
         )
     except subprocess.TimeoutExpired as exc:
-        logger.error(f"bcl2fastq timed out after {exc.timeout} seconds")
+        logger.error(f"{name} timed out after {exc.timeout} seconds")
         logger.debug(f"sending mail to:")
         logger.debug(",".join(config["email"]["addresses_to_email_on_error"]))
         mailbot.timeout_mail(seq_dir.name, exc.timeout, config["email"])
         return False
 
     if proc.returncode != 0:
-        logger.error(f"bcl2fastq returned code {proc.returncode}")
+        logger.error(f"{name} returned code {proc.returncode}")
         logger.debug(f"sending error mail to:")
         logger.debug(",".join(config["email"]["addresses_to_email_on_error"]))
         mailbot.error_mail(seq_dir.name, proc, config["email"])
@@ -106,8 +108,8 @@ def demux_run(seq_dir: pathlib.Path, logger: logging.Logger):
         return False
 
     samplesheet_path = samplesheet_dir / f"{seq_dir.name}.csv"
-    temp_output = scratch_space / seq_dir.name
-    temp_output.mkdir(exist_ok=True)
+    fastq_output = output_dir / seq_dir.name
+    fastq_output.mkdir(exist_ok=True)
 
     logger.info(f"demuxing {seq_dir}")
 
@@ -127,7 +129,7 @@ def demux_run(seq_dir: pathlib.Path, logger: logging.Logger):
         "--runfolder-dir",
         f"{seq_dir}",
         "--output-dir",
-        f"{temp_output}",
+        f"{fastq_output}",
     ]
 
     if cellranger:
@@ -157,11 +159,29 @@ def demux_run(seq_dir: pathlib.Path, logger: logging.Logger):
         demux_cmd.extend(["--barcode-mismatches", "0"])
 
     if len(rows) <= config["demux"]["split_above"]:
-        succeeded = run_bcl2fastq(seq_dir, demux_cmd, logger)
+        succeeded = run_bcl2fastx(seq_dir, demux_cmd, logger, "bcl2fastq")
+        if not succeeded:
+            return False
+    elif not cellranger:
+        demux_cmd = [
+            config["demux"]["bcl2fastr"],
+            "--threads",
+            f"{config['demux']['local_threads']}",
+            "--read-chunks",
+            f"{config['demux']['read-chunks']}",
+            "--samplesheet",
+            f"{samplesheet_path}",
+            "--run-path",
+            f"{seq_dir}",
+            "--output",
+            f"{fastq_output}",
+        ]
+
+        succeeded = run_bcl2fastx(seq_dir, demux_cmd, logger, "bcl2fastr")
         if not succeeded:
             return False
     else:
-        logger.info("Not demuxing big runs yet")
+        logger.warning(f"Cellranger run with {len(rows)} samples is not supported")
         return False
 
     upload_cmd = [
@@ -202,17 +222,18 @@ def demux_run(seq_dir: pathlib.Path, logger: logging.Logger):
 
 
 def novaseq_index(seq_dir: pathlib.Path, logger: logging.Logger):
-    output_file = scratch_space / f"{seq_dir.name}.txt"
+    output_file = output_dir / seq_dir.name / f"{seq_dir.name}.txt"
+    output_file.parent.mkdir(exist_ok=True)
 
     index_cmd = [
-        config["demux"]["nova_index"],
-        "-p",
+        config["demux"]["bcl2index"],
+        "--threads",
         f"{config['demux']['local_threads']}",
-        "--run_path",
+        "--run-path",
         f"{seq_dir}",
-        "--output_file",
+        "--output",
         output_file.as_posix(),
-        "--top_n_counts",
+        "--top-n",
         f"{config['demux']['index_top_n']}",
     ]
 
@@ -221,13 +242,56 @@ def novaseq_index(seq_dir: pathlib.Path, logger: logging.Logger):
     proc = subprocess.run(index_cmd, universal_newlines=True, capture_output=True)
 
     if proc.returncode != 0:
-        logger.error(f"nova_index returned code {proc.returncode}")
+        logger.error(f"bcl2index returned code {proc.returncode}")
         logger.debug(f"sending error mail to:")
         logger.debug(",".join(config["email"]["addresses_to_email_on_error"]))
         mailbot.error_mail(seq_dir.name, proc, config["email"])
         return False
 
     logger.info("Sending index counts email")
+    mailbot.mail_nova_index(seq_dir.name, output_file, config["email"])
+
+    if config["local"]["clean"]:
+        logger.debug(f"Cleaning up {output_file}")
+        os.remove(output_file)
+
+    return True
+
+
+def filter_index(seq_dir: pathlib.Path, logger: logging.Logger):
+    input_file = output_dir / seq_dir.name / f"{seq_dir.name}.txt"
+    output_file = output_dir / seq_dir.name / f"{seq_dir.name}_filtered.txt"
+    samplesheet_path = samplesheet_dir / f"{seq_dir.name}.csv"
+
+    if not input_file.exists():
+        logger.warning(f"{input_file} doesn't exist, skipping")
+        return False
+
+    if not samplesheet_path.exists():
+        logger.warning(f"Can't find {samplesheet_path}, skipping")
+
+    filter_cmd = [
+        config["demux"]["filter_index"],
+        "--input-count",
+        input_file.as_posix(),
+        "--output",
+        output_file.as_posix(),
+        "--samplesheet",
+        samplesheet_path.as_posix(),
+    ]
+
+    logger.debug(f"running command:\n\t{' '.join(index_cmd)}")
+
+    proc = subprocess.run(filter_cmd, universal_newlines=True, capture_output=True)
+
+    if proc.returncode != 0:
+        logger.error(f"filter_index returned code {proc.returncode}")
+        logger.debug(f"sending error mail to:")
+        logger.debug(",".join(config["email"]["addresses_to_email_on_error"]))
+        mailbot.error_mail(seq_dir.name, proc, config["email"])
+        return False
+
+    logger.info("Sending filtered index counts email")
     mailbot.mail_nova_index(seq_dir.name, output_file, config["email"])
 
     if config["local"]["clean"]:
@@ -306,11 +370,8 @@ def main():
                         updated_demux_set.add(run_dir.name)
 
                 elif (run_dir / "CopyComplete.txt").exists():
-                    if (
-                        run_dir.name not in samplesheets
-                        and run_dir.name not in index_set
-                    ):
-                        logger.debug(f"no samplesheet for {run_dir.name}, indexing...")
+                    if run_dir.name not in index_set:
+                        logger.debug(f"no record for {run_dir.name}, indexing...")
                         if novaseq_index(run_dir, logger):
                             updated_index_set.add(run_dir.name)
                     elif run_dir.name not in samplesheets:
@@ -318,6 +379,8 @@ def main():
                         continue
                     elif demux_run(run_dir, logger):
                         updated_demux_set.add(run_dir.name)
+                        logger.debug(f"filtering index count for {run_dir.name}")
+                        filter_index(run_dir, logger)
 
     logger.info("scan complete")
 

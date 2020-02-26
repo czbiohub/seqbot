@@ -42,13 +42,16 @@ def demux_mail(s3_uri: str, run_name: str, email_config: dict, no_mismatch: bool
     send_mail(msg)
 
 
-def mail_nova_index(run_name: str, index_counts: pathlib.Path, email_config: dict):
+def mail_nova_index(
+    run_name: str, index_counts: pathlib.Path, email_config: dict, undetermined: bool
+):
+    undet = "undetermined " if undetermined else " "
     msg = config_msg(
-        subject=f"[Seqbot] index counts for {run_name}",
+        subject=f"[Seqbot] {undet}counts for {run_name}",
         sender=email_config["username"],
         mailto=",".join(email_config["addresses_to_email"]),
         content=f"""
-The most common indexes are attached as a {index_counts.suffix} file.
+The most common {undet}indexes are attached as a {index_counts.suffix} file.
 
 - seqbot
 """,
