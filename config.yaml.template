@@ -2,6 +2,7 @@ demux:
   bcl2fastq: /usr/local/bin/bcl2fastq
   index_top_n: 15360
   local_threads: 64
+  read_chunks: 468
   split_above: 384
   timeout: 12000 # max time (in seconds) that a demux should take
   bcl2index: /path/to/bcl2index

@@ -168,7 +168,7 @@ def demux_run(seq_dir: pathlib.Path, logger: logging.Logger):
             "--threads",
             f"{config['demux']['local_threads']}",
             "--read-chunks",
-            f"{config['demux']['read-chunks']}",
+            f"{config['demux']['read_chunks']}",
             "--samplesheet",
             f"{samplesheet_path}",
             "--run-path",
