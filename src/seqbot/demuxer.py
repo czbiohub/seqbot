@@ -7,8 +7,6 @@
 #   - demultiplex the run
 #   - upload fastq files to S3 when completed
 
-
-import collections
 import logging
 import os
 import pathlib
@@ -25,6 +23,9 @@ import seqbot.mailbot as mailbot
 import seqbot.util as util
 
 
+log = logging.getLogger(__name__)
+
+
 config = util.get_config()
 
 # locations where sequencing data gets written
@@ -32,6 +33,7 @@ SEQ_DIRS = [pathlib.Path(seq_dir) for seq_dir in config["seqs"]["base"]]
 
 # location on S3 where fastqs are sent
 S3_FASTQ_URI = f's3://{config["s3"]["seqbot_bucket"]}/{config["s3"]["fastq_prefix"]}'
+S3_COVID_URI = f's3://{config["s3"]["covid_bucket"]}'
 S3_SAMPLESHEET_URI = (
     f's3://{config["s3"]["seqbot_bucket"]}/{config["s3"]["samplesheet_prefix"]}'
 )
@@ -65,10 +67,8 @@ def maybe_exit_process():
         time.sleep(5)
 
 
-def run_bcl2fastx(
-    seq_dir: pathlib.Path, demux_cmd: list, logger: logging.Logger, name: str
-):
-    logger.debug(f"running command:\n\t{' '.join(demux_cmd)}")
+def run_bcl2fastx(seq_dir: pathlib.Path, demux_cmd: list, name: str):
+    log.debug(f"running command:\n\t{' '.join(demux_cmd)}")
 
     try:
         proc = subprocess.run(
@@ -78,32 +78,34 @@ def run_bcl2fastx(
             timeout=config["demux"]["timeout"],
         )
     except subprocess.TimeoutExpired as exc:
-        logger.error(f"{name} timed out after {exc.timeout} seconds")
-        logger.debug(f"sending mail to:")
-        logger.debug(",".join(config["email"]["addresses_to_email_on_error"]))
-        mailbot.timeout_mail(seq_dir.name, exc.timeout, config["email"])
+        log.error(f"{name} timed out after {exc.timeout} seconds")
+        mailbot.timeout_mail(seq_dir.name, exc.timeout, config["email"], "demux")
         return False
 
     if proc.returncode != 0:
-        logger.error(f"{name} returned code {proc.returncode}")
-        logger.debug(f"sending error mail to:")
-        logger.debug(",".join(config["email"]["addresses_to_email_on_error"]))
-        mailbot.error_mail(seq_dir.name, proc, config["email"])
+        log.error(f"{name} returned code {proc.returncode}")
+        mailbot.error_mail(seq_dir.name, proc, config["email"], "demux")
         return False
     else:
         return True
 
 
-def demux_run(seq_dir: pathlib.Path, logger: logging.Logger):
+def demux_run(seq_dir: pathlib.Path):
     try:
-        hdr, rows, split_lanes, cellranger, index_overlap = util.get_samplesheet(
-            seq_dir, config, logger, samplesheet_dir / f"{seq_dir.name}.csv"
+        (
+            hdr,
+            rows,
+            split_lanes,
+            cellranger,
+            index_overlap,
+            is_covid,
+        ) = util.get_samplesheet(
+            seq_dir, config, samplesheet_dir / f"{seq_dir.name}.csv"
         )
     except ValueError:
+        log.exception("Bad samplesheet:")
         return False
     except UnicodeDecodeError:
-        logger.debug("Sending error mail to:")
-        logger.debug(",".join(config["email"]["addresses_to_email"]))
         mailbot.samplesheet_error_mail(seq_dir.name, config["email"])
         return False
 
@@ -111,7 +113,7 @@ def demux_run(seq_dir: pathlib.Path, logger: logging.Logger):
     fastq_output = output_dir / seq_dir.name
     fastq_output.mkdir(exist_ok=True)
 
-    logger.info(f"demuxing {seq_dir}")
+    log.info(f"demuxing {seq_dir}")
 
     loading_threads = min(config["demux"]["local_threads"] // 2, len(rows))
     writing_threads = min(config["demux"]["local_threads"] // 2, len(rows))
@@ -133,16 +135,13 @@ def demux_run(seq_dir: pathlib.Path, logger: logging.Logger):
     ]
 
     if cellranger:
-        if cellranger == 2:
-            demux_cmd.append("--use-bases-mask=Y*,I*,Y*")
-        elif cellranger == 3:
-            demux_cmd.append("--use-bases-mask=Y*,I*,Y*")
-        else:
-            logger.error("Unknown cellranger version, skipping")
+        if cellranger not in (2, 3, "VDJ"):
+            log.error("Unknown cellranger version, skipping")
             return False
 
         demux_cmd.extend(
             [
+                "--use-bases-mask=Y*,I*,Y*",
                 "--create-fastq-for-index-reads",
                 "--minimum-trimmed-read-length=8",
                 "--mask-short-adapter-reads=8",
@@ -159,10 +158,10 @@ def demux_run(seq_dir: pathlib.Path, logger: logging.Logger):
         demux_cmd.extend(["--barcode-mismatches", "0"])
 
     if len(rows) <= config["demux"]["split_above"]:
-        succeeded = run_bcl2fastx(seq_dir, demux_cmd, logger, "bcl2fastq")
+        succeeded = run_bcl2fastx(seq_dir, demux_cmd, "bcl2fastq")
         if not succeeded:
             return False
-    elif not cellranger:
+    elif seq_dir.parent.name.startswith("NovaSeq") and not cellranger:
         demux_cmd = [
             config["demux"]["bcl2fastr"],
             "--threads",
@@ -177,11 +176,14 @@ def demux_run(seq_dir: pathlib.Path, logger: logging.Logger):
             f"{fastq_output}",
         ]
 
-        succeeded = run_bcl2fastx(seq_dir, demux_cmd, logger, "bcl2fastr")
+        succeeded = run_bcl2fastx(seq_dir, demux_cmd, "bcl2fastr")
         if not succeeded:
             return False
+    elif not cellranger:
+        log.warning(f"{len(rows)} is just too much for now")
+        return False
     else:
-        logger.warning(f"Cellranger run with {len(rows)} samples is not supported")
+        log.warning(f"Cellranger run with {len(rows)} samples is not supported")
         return False
 
     upload_cmd = [
@@ -193,85 +195,114 @@ def demux_run(seq_dir: pathlib.Path, logger: logging.Logger):
         f"{S3_FASTQ_URI}/{seq_dir.name}",
     ]
 
-    logger.debug(f"uploading results: '{' '.join(upload_cmd)}'")
+    log.debug(f"uploading results: '{' '.join(upload_cmd)}'")
 
     proc = subprocess.run(upload_cmd, universal_newlines=True, capture_output=True)
     failed = proc.returncode != 0
 
+    if is_covid and not failed:
+        sync_cmd = [
+            config["s3"]["awscli"],
+            "s3",
+            "sync",
+            "--no-progress",
+            f"{S3_FASTQ_URI}/{seq_dir.name}",
+            f"{S3_COVID_URI}/{seq_dir.name}",
+        ]
+
+        log.debug(f"copying results: '{' '.join(sync_cmd)}'")
+
+        proc = subprocess.run(sync_cmd, universal_newlines=True, capture_output=True)
+        failed = proc.returncode != 0
+
     if failed:
-        logger.error(f"upload to s3 returned code {proc.returncode}")
-        logger.debug(f"sending error mail to:")
-        logger.debug(",".join(config["email"]["addresses_to_email_on_error"]))
-        mailbot.error_mail(seq_dir.name, proc, email_config=config["email"])
+        log.error(f"upload to s3 returned code {proc.returncode}")
+        mailbot.error_mail(
+            seq_dir.name, proc, email_config=config["email"], task="upload"
+        )
 
         return False
     else:
         if config["local"]["clean"]:
             rm_cmd = ["rm", "-rf", f"{fastq_output}"]
-            logger.debug(f"removing local copy: '{' '.join(rm_cmd)}'")
+            log.debug(f"removing local copy: '{' '.join(rm_cmd)}'")
             proc = subprocess.run(rm_cmd, universal_newlines=True, capture_output=True)
 
             if proc.returncode != 0:
-                logger.warning(f"rm failed for {seq_dir.name}!")
-                logger.warning(proc.stderr)
+                log.warning(f"rm failed for {seq_dir.name}!")
+                log.warning(proc.stderr)
 
-        logger.info("Sending notification email")
-        mailbot.demux_mail(S3_FASTQ_URI, seq_dir.name, config["email"], index_overlap)
+        log.info("Sending notification email")
+        mailbot.demux_mail(
+            S3_FASTQ_URI,
+            seq_dir.name,
+            config["email"],
+            index_overlap,
+            S3_COVID_URI if is_covid else None,
+        )
 
         return True
 
 
-def novaseq_index(seq_dir: pathlib.Path, logger: logging.Logger):
+def novaseq_index(seq_dir: pathlib.Path):
     output_file = output_dir / seq_dir.name / f"{seq_dir.name}.txt"
     output_file.parent.mkdir(exist_ok=True)
 
     index_cmd = [
-        config["demux"]["bcl2index"],
+        config["index"]["bcl2index"],
         "--threads",
-        f"{config['demux']['local_threads']}",
+        f"{config['index']['local_threads']}",
         "--run-path",
         f"{seq_dir}",
         "--output",
         output_file.as_posix(),
         "--top-n",
-        f"{config['demux']['index_top_n']}",
+        f"{config['index']['index_top_n']}",
     ]
 
-    logger.debug(f"running command:\n\t{' '.join(index_cmd)}")
+    log.debug(f"running command:\n\t{' '.join(index_cmd)}")
 
-    proc = subprocess.run(index_cmd, universal_newlines=True, capture_output=True)
-
-    if proc.returncode != 0:
-        logger.error(f"bcl2index returned code {proc.returncode}")
-        logger.debug(f"sending error mail to:")
-        logger.debug(",".join(config["email"]["addresses_to_email_on_error"]))
-        mailbot.error_mail(seq_dir.name, proc, config["email"])
+    try:
+        proc = subprocess.run(
+            index_cmd,
+            universal_newlines=True,
+            capture_output=True,
+            timeout=config["index"]["timeout"],
+        )
+    except subprocess.TimeoutExpired as exc:
+        log.error(f"index timed out after {exc.timeout} seconds")
+        mailbot.timeout_mail(seq_dir.name, exc.timeout, config["email"], "index")
         return False
 
-    logger.info("Sending index counts email")
-    mailbot.mail_nova_index(seq_dir.name, output_file, config["email"])
+    if proc.returncode != 0:
+        log.error(f"bcl2index returned code {proc.returncode}")
+        mailbot.error_mail(seq_dir.name, proc, config["email"], "index")
+        return False
+
+    log.info("Sending index counts email")
+    mailbot.mail_nova_index(seq_dir.name, output_file, config["email"], False)
 
     if config["local"]["clean"]:
-        logger.debug(f"Cleaning up {output_file}")
+        log.debug(f"Cleaning up {output_file}")
         os.remove(output_file)
 
     return True
 
 
-def filter_index(seq_dir: pathlib.Path, logger: logging.Logger):
+def filter_index(seq_dir: pathlib.Path):
     input_file = output_dir / seq_dir.name / f"{seq_dir.name}.txt"
     output_file = output_dir / seq_dir.name / f"{seq_dir.name}_filtered.txt"
     samplesheet_path = samplesheet_dir / f"{seq_dir.name}.csv"
 
     if not input_file.exists():
-        logger.warning(f"{input_file} doesn't exist, skipping")
+        log.warning(f"{input_file} doesn't exist, skipping")
         return False
 
     if not samplesheet_path.exists():
-        logger.warning(f"Can't find {samplesheet_path}, skipping")
+        log.warning(f"Can't find {samplesheet_path}, skipping")
 
     filter_cmd = [
-        config["demux"]["filter_index"],
+        config["index"]["filter_index"],
         "--input-count",
         input_file.as_posix(),
         "--output",
@@ -280,22 +311,20 @@ def filter_index(seq_dir: pathlib.Path, logger: logging.Logger):
         samplesheet_path.as_posix(),
     ]
 
-    logger.debug(f"running command:\n\t{' '.join(index_cmd)}")
+    log.debug(f"running command:\n\t{' '.join(filter_cmd)}")
 
     proc = subprocess.run(filter_cmd, universal_newlines=True, capture_output=True)
 
     if proc.returncode != 0:
-        logger.error(f"filter_index returned code {proc.returncode}")
-        logger.debug(f"sending error mail to:")
-        logger.debug(",".join(config["email"]["addresses_to_email_on_error"]))
-        mailbot.error_mail(seq_dir.name, proc, config["email"])
+        log.error(f"filter_index returned code {proc.returncode}")
+        mailbot.error_mail(seq_dir.name, proc, config["email"], "filter")
         return False
 
-    logger.info("Sending filtered index counts email")
-    mailbot.mail_nova_index(seq_dir.name, output_file, config["email"])
+    log.info("Sending filtered index counts email")
+    mailbot.mail_nova_index(seq_dir.name, output_file, config["email"], True)
 
     if config["local"]["clean"]:
-        logger.debug(f"Cleaning up {output_file}")
+        log.debug(f"Cleaning up {output_file}")
         os.remove(output_file)
 
     return True
@@ -306,13 +335,13 @@ def main():
     # check for an existing process running
     maybe_exit_process()
 
-    logger = ut_log.get_trfh_logger(
-        "demuxer",
+    ut_log.get_trfh_logger(
+        __package__,
         (config["logging"]["info"], logging.INFO, "midnight", 14),
         (config["logging"]["debug"], logging.DEBUG, "midnight", 3),
     )
 
-    logger.debug("querying s3 for list of existing runs")
+    log.debug("querying s3 for list of existing runs")
     demux_set = {
         os.path.basename(d[:-1])
         for d in s3u.get_folders(
@@ -322,15 +351,15 @@ def main():
     }
 
     if index_cache.exists():
-        logger.debug("reading cache file for indexed runs")
+        log.debug("reading cache file for indexed runs")
         with index_cache.open() as f:
             index_set = {line.strip() for line in f}
     else:
         index_set = set()
 
-    logger.info(f"{len(demux_set)} folders in {S3_FASTQ_URI}")
+    log.info(f"{len(demux_set)} folders in {S3_FASTQ_URI}")
 
-    logger.debug("Getting the list of sample-sheets")
+    log.debug("Getting the list of sample-sheets")
     samplesheets = {
         os.path.splitext(os.path.basename(fn))[0]
         for fn in s3u.get_files(
@@ -339,58 +368,58 @@ def main():
         )
     }
 
-    logger.info(f"{len(samplesheets)} samplesheets in {S3_SAMPLESHEET_URI}")
+    log.info(f"{len(samplesheets)} samplesheets in {S3_SAMPLESHEET_URI}")
 
     updated_demux_set = demux_set.copy()
     updated_index_set = index_set.copy()
 
     # for each sequencer, check for newly completed runs
     for seq_dir in SEQ_DIRS:
-        logger.info(f"scanning {seq_dir}...")
+        log.info(f"scanning {seq_dir}...")
 
         for seq in config["seqs"]["dirs"]:
-            logger.info(seq)
+            log.info(seq)
             fns = sorted(
                 (seq_dir / seq).glob(f'[0-9]*/{config["seqs"]["sentinels"][seq]}')
             )
-            logger.debug(f"{len(fns)} ~complete runs in {seq_dir / seq}")
+            log.debug(f"{len(fns)} ~complete runs in {seq_dir / seq}")
 
             for fn in fns:
                 run_dir = fn.parent
                 if run_dir.name in updated_demux_set:
-                    logger.debug(f"skipping {run_dir.name}, already demuxed")
                     continue
 
                 if not seq.startswith("NovaSeq"):
                     if run_dir.name not in samplesheets:
-                        logger.debug(f"skipping {run_dir.name}, no sample-sheet")
+                        log.debug(f"skipping {run_dir.name}, no sample-sheet")
                         continue
 
-                    if demux_run(run_dir, logger):
+                    if demux_run(run_dir):
                         updated_demux_set.add(run_dir.name)
 
-                elif (run_dir / "CopyComplete.txt").exists():
+                # elif (run_dir / "CopyComplete.txt").exists():
+                else:
                     if run_dir.name not in index_set:
-                        logger.debug(f"no record for {run_dir.name}, indexing...")
-                        if novaseq_index(run_dir, logger):
+                        log.debug(f"no record for {run_dir.name}, indexing...")
+                        if novaseq_index(run_dir):
                             updated_index_set.add(run_dir.name)
-                    
+
                     if run_dir.name not in samplesheets:
-                        logger.debug(f"skipping {run_dir.name}, no sample-sheet")
+                        log.debug(f"skipping {run_dir.name}, no sample-sheet")
                         continue
-                    elif demux_run(run_dir, logger):
+                    elif demux_run(run_dir):
                         updated_demux_set.add(run_dir.name)
 
                         if run_dir.name in updated_index_set:
-                            logger.debug(f"filtering index count for {run_dir.name}")
-                            filter_index(run_dir, logger)
+                            log.debug(f"filtering index count for {run_dir.name}")
+                            filter_index(run_dir)
 
-    logger.info("scan complete")
+    log.info("scan complete")
 
-    logger.info(f"demuxed {len(updated_demux_set) - len(demux_set)} new runs")
-    logger.info(f"indexed {len(updated_index_set) - len(index_set)} new runs")
+    log.info(f"demuxed {len(updated_demux_set) - len(demux_set)} new runs")
+    log.info(f"indexed {len(updated_index_set) - len(index_set)} new runs")
 
     with index_cache.open(mode="w") as OUT:
         print("\n".join(sorted(updated_index_set)), file=OUT)
 
-    logger.debug("wrote new cache file")
+    log.debug("wrote new cache file")

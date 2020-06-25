@@ -17,10 +17,14 @@ import xml.etree.ElementTree as et
 import numpy as np
 
 
+log = logging.getLogger(__name__)
+
+
 default_config_file = pathlib.Path.home() / ".config/seqbot/config.yaml"
 
 
 def get_config(config_file: pathlib.Path = default_config_file):
+    log.debug(f"loading config_file {config_file}")
     with open(config_file) as f:
         config = yaml.load(f)
 
@@ -30,13 +34,20 @@ def get_config(config_file: pathlib.Path = default_config_file):
 def read_samplesheet(samplesheet_io: typing.TextIO):
     rows = list(csv.reader(samplesheet_io))
 
+    # find the [CZBiohubSequencing] section
+    try:
+        h_i = next(i for i, r in enumerate(rows) if r[0] == "[CZBiohubSequencing]")
+        is_covid = rows[h_i + 1][1] == "COVID19"
+    except StopIteration:
+        is_covid = False
+
     # find the [Data] section to check format
-    h_i = [i for i, r in enumerate(rows) if r[0] == "[Data]"][0]
+    h_i = next(i for i, r in enumerate(rows) if r[0] == "[Data]")
     h_row = list(map(str.lower, rows[h_i + 1]))
 
     hdr = "\n".join(",".join(r) for r in rows[: h_i + 2])
 
-    return hdr, h_row, rows[h_i + 2 :]
+    return hdr, h_row, rows[h_i + 2 :], is_covid
 
 
 # hacky way to infer 10x version: check RunInfo.xml for the R1 length
@@ -48,11 +59,14 @@ def get_10x_version(seq_dir: pathlib.Path):
     read_elems.sort(key=lambda el: int(el.get("Number")))
 
     r1_len = int(read_elems[0].get("NumCycles"))
+    r2_len = int(read_elems[-1].get("NumCycles"))
 
     if r1_len == 26:
         return 2
     elif r1_len == 28:
         return 3
+    elif r1_len == 150 and r2_len == 150:
+        return "VDJ"
     else:
         return -1
 
@@ -68,15 +82,12 @@ def convert_index(row: typing.List, index_i: int, cr_indexes: dict):
 
 
 def get_samplesheet(
-    seq_dir: pathlib.Path,
-    config: dict,
-    logger: logging.Logger,
-    download_path: pathlib.Path = None,
+    seq_dir: pathlib.Path, config: dict, download_path: pathlib.Path = None
 ):
-    logger.debug("creating S3 client")
+    log.debug("creating S3 client")
     client = boto3.client("s3")
 
-    logger.info(f"downloading sample-sheet for {seq_dir.name}")
+    log.info(f"downloading sample-sheet for {seq_dir.name}")
 
     fb = io.BytesIO()
 
@@ -89,20 +100,19 @@ def get_samplesheet(
     try:
         fb.getvalue().decode("ascii")
     except UnicodeDecodeError:
-        logger.error("illegal character in samplesheet")
+        log.error("illegal character in samplesheet")
         raise
 
-    logger.info(f"reading samplesheet for {seq_dir.name}")
+    log.info(f"reading samplesheet for {seq_dir.name}")
 
-    hdr, h_row, rows = read_samplesheet(
+    hdr, h_row, rows, is_covid = read_samplesheet(
         io.StringIO(fb.getvalue().decode(), newline=None)
     )
 
     if "index" in h_row:
         index_i = h_row.index("index")
     else:
-        logger.error("Samplesheet doesn't contain an index column, skipping!")
-        raise ValueError("bad samplesheet")
+        raise ValueError("Samplesheet doesn't contain an index column")
 
     # if there's a lane column, we'll split lanes
     split_lanes = "lane" in h_row
@@ -112,11 +122,10 @@ def get_samplesheet(
     any_cellranger = any(r[index_i].startswith("SI-") for r in rows)
 
     if any_cellranger and not all_cellranger:
-        logger.error("Mix of CellRanger and other runs, can't demux this yet")
         raise ValueError("Mix of CellRanger and other runs, can't demux this yet")
 
     if all_cellranger:
-        with open(config["demux"]["cellranger_indexes"]) as f:
+        with open(config["index"]["cellranger_indexes"]) as f:
             cr_indexes = {r[0]: r[1:] for r in csv.reader(f)}
 
         rows = [r for row in rows for r in convert_index(row, index_i, cr_indexes)]
@@ -150,7 +159,7 @@ def get_samplesheet(
 
         index_overlap = hamming_conflict(indexes, max_dist=1)
 
-    return hdr, rows, split_lanes, cellranger, index_overlap
+    return hdr, rows, split_lanes, cellranger, index_overlap, is_covid
 
 
 def hamming_set(index: str, d: int = 1, include_N: bool = True):

@@ -1,10 +1,14 @@
 #!/usr/bin/env python
 
+import logging
 import pathlib
 import smtplib
 import subprocess
 
 from email.message import EmailMessage
+
+
+log = logging.getLogger(__name__)
 
 
 def config_msg(subject: str, sender: str, mailto: str, content: str):
@@ -22,11 +26,22 @@ def send_mail(msg: EmailMessage):
         smtp.send_message(msg)
 
 
-def demux_mail(s3_uri: str, run_name: str, email_config: dict, no_mismatch: bool):
+def demux_mail(
+    s3_uri: str, run_name: str, email_config: dict, no_mismatch: bool, covid_uri: str
+):
+    log.debug(
+        "Sending error mail to: " ", ".join(email_config["addresses_to_email_on_error"])
+    )
+
     if no_mismatch:
         header = "NOTE! This run was demuxed with --barcode_mismatches 0\n\n"
     else:
         header = ""
+
+    if covid_uri is not None:
+        covid_note = f"\nand are synced to:\n    {covid_uri}/{run_name}"
+    else:
+        covid_note = ""
 
     msg = config_msg(
         subject=f"[Seqbot] demux for {run_name} is complete!",
@@ -34,6 +49,7 @@ def demux_mail(s3_uri: str, run_name: str, email_config: dict, no_mismatch: bool
         mailto=",".join(email_config["addresses_to_email"]),
         content=f"""{header}Results are located in:
     {s3_uri}/{run_name}
+{covid_note}
 
 - seqbot
 """,
@@ -45,7 +61,9 @@ def demux_mail(s3_uri: str, run_name: str, email_config: dict, no_mismatch: bool
 def mail_nova_index(
     run_name: str, index_counts: pathlib.Path, email_config: dict, undetermined: bool
 ):
-    undet = "undetermined " if undetermined else " "
+    log.debug(f"Sending index mail to: {', '.join(email_config['addresses_to_email'])}")
+
+    undet = "undetermined " if undetermined else ""
     msg = config_msg(
         subject=f"[Seqbot] {undet}counts for {run_name}",
         sender=email_config["username"],
@@ -68,7 +86,13 @@ The most common {undet}indexes are attached as a {index_counts.suffix} file.
     send_mail(msg)
 
 
-def error_mail(run_name: str, proc: subprocess.CompletedProcess, email_config: dict):
+def error_mail(
+    run_name: str, proc: subprocess.CompletedProcess, email_config: dict, task: str
+):
+    log.debug(
+        "Sending error mail to: " ", ".join(email_config["addresses_to_email_on_error"])
+    )
+
     stderr_lines = proc.stderr.splitlines()
 
     n_lines = min(10, len(stderr_lines) // 2)
@@ -77,10 +101,10 @@ def error_mail(run_name: str, proc: subprocess.CompletedProcess, email_config: d
     tail = "\n".join(stderr_lines[-n_lines:])
 
     msg = config_msg(
-        subject=f"[Seqbot] demux for {run_name} had an error",
+        subject=f"[Seqbot] {task} for {run_name} had an error",
         sender=email_config["username"],
         mailto=",".join(email_config["addresses_to_email_on_error"]),
-        content=f"""There was an error while demuxing run {run_name}:
+        content=f"""There was an error while {task}ing run {run_name}:
 
 {head}
 ...
@@ -95,12 +119,16 @@ def error_mail(run_name: str, proc: subprocess.CompletedProcess, email_config: d
     send_mail(msg)
 
 
-def timeout_mail(run_name: str, timeout: int, email_config: dict):
+def timeout_mail(run_name: str, timeout: int, email_config: dict, task: str):
+    log.debug(
+        "Sending error mail to: " ", ".join(email_config["addresses_to_email_on_error"])
+    )
+
     msg = config_msg(
-        subject=f"[Seqbot] demux for {run_name} timed out",
+        subject=f"[Seqbot] {task} for {run_name} timed out",
         sender=email_config["username"],
         mailto=",".join(email_config["addresses_to_email_on_error"]),
-        content=f"""Timed out after {timeout} seconds while demuxing run {run_name}.
+        content=f"""Timed out after {timeout} seconds while {task}ing run {run_name}.
 
 - seqbot
 """,
@@ -110,6 +138,8 @@ def timeout_mail(run_name: str, timeout: int, email_config: dict):
 
 
 def samplesheet_error_mail(run_name: str, email_config: dict):
+    log.debug(f"Sending error mail to: {', '.join(email_config['addresses_to_email'])}")
+
     msg = config_msg(
         subject=f"[Seqbot] {run_name} might have a bad samplesheet",
         sender=email_config["username"],

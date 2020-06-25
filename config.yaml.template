@@ -1,14 +1,17 @@
 demux:
   bcl2fastq: /usr/local/bin/bcl2fastq
-  index_top_n: 15360
+  bcl2fastr: /path/to/bcl2fastr
   local_threads: 64
   read_chunks: 468
   split_above: 384
   timeout: 12000 # max time (in seconds) that a demux should take
+index:
   bcl2index: /path/to/bcl2index
-  bcl2fastr: /path/to/bcl2fastr
-  filter_index: /path/to/filter_index
   cellranger_indexes: /path/to/10x_indexes.csv
+  filter_index: /path/to/filter_index
+  index_top_n: 15360
+  local_threads: 64
+  timeout: 1800 # max time (in seconds) that an index should take
 email:
   addresses_to_email:
   - sequencing.person@your.organization
@@ -29,6 +32,7 @@ s3:
   fastq_prefix: directory_for_fastqs
   samplesheet_prefix: directory_for_samplesheets
   seqbot_bucket: your-bucket
+  covid_bucket: separate-bucket-to-copy-covid19-data
 seqs:
   base:
   - /path/to/sequencers
