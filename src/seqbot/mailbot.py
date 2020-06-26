@@ -29,9 +29,8 @@ def send_mail(msg: EmailMessage):
 def demux_mail(
     s3_uri: str, run_name: str, email_config: dict, no_mismatch: bool, covid_uri: str
 ):
-    log.debug(
-        "Sending error mail to: " ", ".join(email_config["addresses_to_email_on_error"])
-    )
+    addresses = email_config["addresses_to_email_on_error"]
+    log.debug(f"Sending error mail to: {', '.join(addresses)}")
 
     if no_mismatch:
         header = "NOTE! This run was demuxed with --barcode_mismatches 0\n\n"
@@ -46,7 +45,7 @@ def demux_mail(
     msg = config_msg(
         subject=f"[Seqbot] demux for {run_name} is complete!",
         sender=email_config["username"],
-        mailto=",".join(email_config["addresses_to_email"]),
+        mailto=",".join(addresses),
         content=f"""{header}Results are located in:
     {s3_uri}/{run_name}
 {covid_note}
@@ -61,13 +60,14 @@ def demux_mail(
 def mail_nova_index(
     run_name: str, index_counts: pathlib.Path, email_config: dict, undetermined: bool
 ):
-    log.debug(f"Sending index mail to: {', '.join(email_config['addresses_to_email'])}")
+    addresses = email_config["addresses_to_email"]
+    log.debug(f"Sending index mail to: {', '.join(addresses)}")
 
     undet = "undetermined " if undetermined else ""
     msg = config_msg(
         subject=f"[Seqbot] {undet}counts for {run_name}",
         sender=email_config["username"],
-        mailto=",".join(email_config["addresses_to_email"]),
+        mailto=",".join(addresses),
         content=f"""
 The most common {undet}indexes are attached as a {index_counts.suffix} file.
 
@@ -89,9 +89,8 @@ The most common {undet}indexes are attached as a {index_counts.suffix} file.
 def error_mail(
     run_name: str, proc: subprocess.CompletedProcess, email_config: dict, task: str
 ):
-    log.debug(
-        "Sending error mail to: " ", ".join(email_config["addresses_to_email_on_error"])
-    )
+    addresses = email_config["addresses_to_email_on_error"]
+    log.debug(f"Sending error mail to: {', '.join(addresses)}")
 
     stderr_lines = proc.stderr.splitlines()
 
@@ -103,7 +102,7 @@ def error_mail(
     msg = config_msg(
         subject=f"[Seqbot] {task} for {run_name} had an error",
         sender=email_config["username"],
-        mailto=",".join(email_config["addresses_to_email_on_error"]),
+        mailto=",".join(addresses),
         content=f"""There was an error while {task}ing run {run_name}:
 
 {head}
@@ -120,14 +119,13 @@ def error_mail(
 
 
 def timeout_mail(run_name: str, timeout: int, email_config: dict, task: str):
-    log.debug(
-        "Sending error mail to: " ", ".join(email_config["addresses_to_email_on_error"])
-    )
+    addresses = email_config["addresses_to_email_on_error"]
+    log.debug(f"Sending error mail to: {', '.join(addresses)}")
 
     msg = config_msg(
         subject=f"[Seqbot] {task} for {run_name} timed out",
         sender=email_config["username"],
-        mailto=",".join(email_config["addresses_to_email_on_error"]),
+        mailto=",".join(addresses),
         content=f"""Timed out after {timeout} seconds while {task}ing run {run_name}.
 
 - seqbot
@@ -138,12 +136,13 @@ def timeout_mail(run_name: str, timeout: int, email_config: dict, task: str):
 
 
 def samplesheet_error_mail(run_name: str, email_config: dict):
-    log.debug(f"Sending error mail to: {', '.join(email_config['addresses_to_email'])}")
+    addresses = email_config["addresses_to_email"]
+    log.debug(f"Sending error mail to: {', '.join(addresses)}")
 
     msg = config_msg(
         subject=f"[Seqbot] {run_name} might have a bad samplesheet",
         sender=email_config["username"],
-        mailto=",".join(email_config["addresses_to_email"]),
+        mailto=",".join(addresses),
         content=f"""There were non-ASCII characters in the file, which is usually bad.
 
 - seqbot
