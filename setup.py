@@ -36,15 +36,12 @@ setuptools.setup(
         "boto3 >= 1.7.72",
         "click >= 6.7",
         "PyYAML >= 3.12",
-        "networkx >= 2.2",
         "numpy >= 1.15.0",
         "czb-util",
     ],
     entry_points={
         "console_scripts": [
             "demuxer = seqbot.demuxer:main",
-            "nova_index = seqbot.bcl2fastr.index_count:main",
-            "nova_demux = seqbot.bcl2fastr.write_fastq:main",
         ]
     },
 )

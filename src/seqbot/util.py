@@ -199,16 +199,3 @@ def hamming_conflict(indexes: typing.Sequence[str], max_dist: int = 1):
                 return True
     else:
         return False
-
-
-def write_file(seq_dir, fastq_name, fastqs):
-    for fastq in fastqs:
-        with gzip.open(seq_dir / fastq_name, "at") as out:
-            with gzip.open(fastq, "rt") as f:
-                for line in f:
-                    out.write(line)
-
-
-def merge_fastqs(seq_dir, n_processes, file_lists):
-    with cf.ProcessPoolExecutor(max_workers=n_processes) as ex:
-        list(ex.map(write_file, itertools.repeat(seq_dir), *zip(*file_lists.items())))
