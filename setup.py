@@ -39,9 +39,5 @@ setuptools.setup(
         "numpy >= 1.15.0",
         "czb-util",
     ],
-    entry_points={
-        "console_scripts": [
-            "demuxer = seqbot.demuxer:main",
-        ]
-    },
+    entry_points={"console_scripts": ["demuxer = seqbot.demuxer:main"]},
 )

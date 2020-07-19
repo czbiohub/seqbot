@@ -92,14 +92,7 @@ def run_bcl2fastx(seq_dir: pathlib.Path, demux_cmd: list, name: str):
 
 def demux_run(seq_dir: pathlib.Path):
     try:
-        (
-            hdr,
-            rows,
-            split_lanes,
-            cellranger,
-            index_overlap,
-            is_covid,
-        ) = util.get_samplesheet(
+        hdr, rows, split_lanes, cellranger, index_overlap = util.get_samplesheet(
             seq_dir, config, samplesheet_dir / f"{seq_dir.name}.csv"
         )
     except ValueError:
@@ -200,21 +193,6 @@ def demux_run(seq_dir: pathlib.Path):
     proc = subprocess.run(upload_cmd, universal_newlines=True, capture_output=True)
     failed = proc.returncode != 0
 
-    if is_covid and not failed:
-        sync_cmd = [
-            config["s3"]["awscli"],
-            "s3",
-            "sync",
-            "--no-progress",
-            f"{S3_FASTQ_URI}/{seq_dir.name}",
-            f"{S3_COVID_URI}/{seq_dir.name}",
-        ]
-
-        log.debug(f"copying results: '{' '.join(sync_cmd)}'")
-
-        proc = subprocess.run(sync_cmd, universal_newlines=True, capture_output=True)
-        failed = proc.returncode != 0
-
     if failed:
         log.error(f"upload to s3 returned code {proc.returncode}")
         mailbot.error_mail(
@@ -233,13 +211,7 @@ def demux_run(seq_dir: pathlib.Path):
                 log.warning(proc.stderr)
 
         log.info("Sending notification email")
-        mailbot.demux_mail(
-            S3_FASTQ_URI,
-            seq_dir.name,
-            config["email"],
-            index_overlap,
-            S3_COVID_URI if is_covid else None,
-        )
+        mailbot.demux_mail(S3_FASTQ_URI, seq_dir.name, config["email"], index_overlap)
 
         return True
 
@@ -272,7 +244,7 @@ def novaseq_index(seq_dir: pathlib.Path):
     except subprocess.TimeoutExpired as exc:
         log.error(f"index timed out after {exc.timeout} seconds")
         mailbot.timeout_mail(seq_dir.name, exc.timeout, config["email"], "index")
-        return False
+        return True
 
     if proc.returncode != 0:
         log.error(f"bcl2index returned code {proc.returncode}")

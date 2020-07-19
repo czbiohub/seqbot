@@ -34,20 +34,13 @@ def get_config(config_file: pathlib.Path = default_config_file):
 def read_samplesheet(samplesheet_io: typing.TextIO):
     rows = list(csv.reader(samplesheet_io))
 
-    # find the [CZBiohubSequencing] section
-    try:
-        h_i = next(i for i, r in enumerate(rows) if r[0] == "[CZBiohubSequencing]")
-        is_covid = rows[h_i + 1][1] == "COVID19"
-    except StopIteration:
-        is_covid = False
-
     # find the [Data] section to check format
     h_i = next(i for i, r in enumerate(rows) if r[0] == "[Data]")
     h_row = list(map(str.lower, rows[h_i + 1]))
 
     hdr = "\n".join(",".join(r) for r in rows[: h_i + 2])
 
-    return hdr, h_row, rows[h_i + 2 :], is_covid
+    return hdr, h_row, rows[h_i + 2 :]
 
 
 # hacky way to infer 10x version: check RunInfo.xml for the R1 length
@@ -105,7 +98,7 @@ def get_samplesheet(
 
     log.info(f"reading samplesheet for {seq_dir.name}")
 
-    hdr, h_row, rows, is_covid = read_samplesheet(
+    hdr, h_row, rows = read_samplesheet(
         io.StringIO(fb.getvalue().decode(), newline=None)
     )
 
@@ -159,7 +152,7 @@ def get_samplesheet(
 
         index_overlap = hamming_conflict(indexes, max_dist=1)
 
-    return hdr, rows, split_lanes, cellranger, index_overlap, is_covid
+    return hdr, rows, split_lanes, cellranger, index_overlap
 
 
 def hamming_set(index: str, d: int = 1, include_N: bool = True):

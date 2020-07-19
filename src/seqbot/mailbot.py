@@ -26,9 +26,7 @@ def send_mail(msg: EmailMessage):
         smtp.send_message(msg)
 
 
-def demux_mail(
-    s3_uri: str, run_name: str, email_config: dict, no_mismatch: bool, covid_uri: str
-):
+def demux_mail(s3_uri: str, run_name: str, email_config: dict, no_mismatch: bool):
     addresses = email_config["addresses_to_email_on_error"]
     log.debug(f"Sending error mail to: {', '.join(addresses)}")
 
@@ -37,18 +35,12 @@ def demux_mail(
     else:
         header = ""
 
-    if covid_uri is not None:
-        covid_note = f"\nand are synced to:\n    {covid_uri}/{run_name}"
-    else:
-        covid_note = ""
-
     msg = config_msg(
         subject=f"[Seqbot] demux for {run_name} is complete!",
         sender=email_config["username"],
         mailto=",".join(addresses),
         content=f"""{header}Results are located in:
     {s3_uri}/{run_name}
-{covid_note}
 
 - seqbot
 """,

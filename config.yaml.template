@@ -32,7 +32,6 @@ s3:
   fastq_prefix: directory_for_fastqs
   samplesheet_prefix: directory_for_samplesheets
   seqbot_bucket: your-bucket
-  covid_bucket: separate-bucket-to-copy-covid19-data
 seqs:
   base:
   - /path/to/sequencers
