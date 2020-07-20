@@ -33,7 +33,6 @@ SEQ_DIRS = [pathlib.Path(seq_dir) for seq_dir in config["seqs"]["base"]]
 
 # location on S3 where fastqs are sent
 S3_FASTQ_URI = f's3://{config["s3"]["seqbot_bucket"]}/{config["s3"]["fastq_prefix"]}'
-S3_COVID_URI = f's3://{config["s3"]["covid_bucket"]}'
 S3_SAMPLESHEET_URI = (
     f's3://{config["s3"]["seqbot_bucket"]}/{config["s3"]["samplesheet_prefix"]}'
 )
