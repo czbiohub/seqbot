@@ -27,7 +27,7 @@ def send_mail(msg: EmailMessage):
 
 
 def demux_mail(s3_uri: str, run_name: str, email_config: dict, no_mismatch: bool):
-    addresses = email_config["addresses_to_email_on_error"]
+    addresses = email_config["addresses_to_email"]
     log.debug(f"Sending demux mail to: {', '.join(addresses)}")
 
     if no_mismatch:
