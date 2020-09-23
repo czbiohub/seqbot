@@ -101,6 +101,10 @@ def demux_run(seq_dir: pathlib.Path):
         mailbot.samplesheet_error_mail(seq_dir.name, config["email"])
         return False
 
+    if len(rows) == 0:
+        log.error("Samplesheet is empty, skipping")
+        return False
+
     samplesheet_path = samplesheet_dir / f"{seq_dir.name}.csv"
     fastq_output = output_dir / seq_dir.name
     fastq_output.mkdir(exist_ok=True)
