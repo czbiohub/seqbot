@@ -8,6 +8,7 @@ demux:
 index:
   bcl2index: /path/to/bcl2index
   cellranger_indexes: /path/to/10x_indexes.csv
+  cellranger_dual_indexes: /path/to/10x_dual_indexes.csv
   filter_index: /path/to/filter_index
   index_top_n: 15360
   local_threads: 64
@@ -46,3 +47,5 @@ seqs:
     NextSeq-01: RunCompletionStatus.xml
     NovaSeq-01: SequenceComplete.txt
     iSeq100-01: RunCompletionStatus.xml
+  rev-comp:
+  - MiSeq-01

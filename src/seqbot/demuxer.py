@@ -131,7 +131,7 @@ def demux_run(seq_dir: pathlib.Path):
     ]
 
     if cellranger:
-        if cellranger not in (2, 3, "VDJ"):
+        if cellranger not in (2, 3, "VDJ", "SR"):
             log.error("Unknown cellranger version, skipping")
             return False
 
