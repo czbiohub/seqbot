@@ -39,7 +39,7 @@ def read_samplesheet(samplesheet_io: TextIO):
     h_i = next(i for i, r in enumerate(rows) if r[0] == "[Data]")
     h_row = list(map(str.lower, rows[h_i + 1]))
 
-    hdr = "\n".join(",".join(r) for r in rows[: h_i + 2])
+    hdr = "\n".join(",".join(r) for r in rows[: h_i + 1])
 
     return hdr, h_row, rows[h_i + 2 :]
 
@@ -57,12 +57,12 @@ def get_10x_version(seq_dir: pathlib.Path):
 
     if r1_len == 26:
         return 2
-    elif r1_len == 28:
+    elif r1_len == 28 and len(read_elems) == 3:
         return 3
+    elif r1_len == 28 and r2_len == 75 and len(read_elems) == 4:
+        return "SR"  # for SpaceRanger although that might be too specific?
     elif r1_len == 150 and r2_len == 150:
         return "VDJ"
-    elif r1_len == 28 and r2_len == 75:
-        return "SR"  # for SpaceRanger although that might be too specific?
     else:
         return -1
 
@@ -165,6 +165,7 @@ def get_samplesheet(
     if download_path is not None:
         with download_path.open("w") as out:
             print(hdr, file=out)
+            print(",".join(h_row), file=out)
             print("\n".join(",".join(r) for r in rows), file=out)
 
     if "index2" in h_row:
