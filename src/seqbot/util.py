@@ -59,7 +59,7 @@ def get_10x_version(seq_dir: pathlib.Path):
         return 2
     elif r1_len == 28 and len(read_elems) == 3:
         return 3
-    elif r1_len == 28 and r2_len == 75 and len(read_elems) == 4:
+    elif r1_len == 28 and r2_len in (75, 98) and len(read_elems) == 4:
         return "SR"  # for SpaceRanger although that might be too specific?
     elif r1_len == 150 and r2_len == 150:
         return "VDJ"
