@@ -6,7 +6,8 @@ import io
 import itertools
 import logging
 import pathlib
-import typing
+
+from typing import Any, Dict, List, TextIO, Sequence
 
 import concurrent.futures as cf
 
@@ -31,14 +32,14 @@ def get_config(config_file: pathlib.Path = default_config_file):
     return config
 
 
-def read_samplesheet(samplesheet_io: typing.TextIO):
+def read_samplesheet(samplesheet_io: TextIO):
     rows = list(csv.reader(samplesheet_io))
 
     # find the [Data] section to check format
     h_i = next(i for i, r in enumerate(rows) if r[0] == "[Data]")
     h_row = list(map(str.lower, rows[h_i + 1]))
 
-    hdr = "\n".join(",".join(r) for r in rows[: h_i + 2])
+    hdr = "\n".join(",".join(r) for r in rows[: h_i + 1])
 
     return hdr, h_row, rows[h_i + 2 :]
 
@@ -56,18 +57,37 @@ def get_10x_version(seq_dir: pathlib.Path):
 
     if r1_len == 26:
         return 2
-    elif r1_len == 28:
+    elif r1_len == 28 and len(read_elems) == 3:
         return 3
+    elif r1_len == 28 and r2_len in (75, 98) and len(read_elems) == 4:
+        return "SR"  # for SpaceRanger although that might be too specific?
     elif r1_len == 150 and r2_len == 150:
         return "VDJ"
     else:
         return -1
 
 
-def convert_index(row: typing.List, index_i: int, cr_indexes: dict):
+def convert_index(
+    row: List[str],
+    index_i: int,
+    index2_i: int,
+    cr_indexes: Dict[str, Any],
+    rev_comp: bool,
+):
     if row[index_i] in cr_indexes:
-        for cr_index in cr_indexes[row[index_i]]:
-            yield [row[i] if i != index_i else cr_index for i in range(len(row))]
+        cr_index = cr_indexes[row[index_i]]
+        if isinstance(cr_index, list):
+            for cr_index in cr_indexes[row[index_i]]:
+                yield [row[i] if i != index_i else cr_index for i in range(len(row))]
+        else:
+            new_row = [
+                row[i] if i != index_i else cr_index["index1"] for i in range(len(row))
+            ]
+
+            index2 = cr_index["index2a"] if rev_comp else cr_index["index2b"]
+            new_row.insert(index2_i, index2)
+
+            yield new_row
     elif row[index_i].startswith("SI-"):
         raise ValueError(f"Unrecognized CellRanger index {row[index_i]}")
     else:
@@ -121,15 +141,31 @@ def get_samplesheet(
         with open(config["index"]["cellranger_indexes"]) as f:
             cr_indexes = {r[0]: r[1:] for r in csv.reader(f)}
 
-        rows = [r for row in rows for r in convert_index(row, index_i, cr_indexes)]
+        # new file for dual-indexed kits
+        with open(config["index"]["cellranger_dual_indexes"]) as f:
+            cr_indexes.update((r["index_name"], r) for r in csv.DictReader(f))
 
         cellranger = get_10x_version(seq_dir)
+        if cellranger == "SR":
+            index_i2 = index_i + 1
+            h_row.insert(index_i2, "index2")
+        else:
+            index_i2 = None
+
+        rev_comp = seq_dir.parent.name in config["seqs"]["rev-comp"]
+
+        rows = [
+            r
+            for row in rows
+            for r in convert_index(row, index_i, index_i2, cr_indexes, rev_comp)
+        ]
     else:
         cellranger = 0
 
     if download_path is not None:
         with download_path.open("w") as out:
             print(hdr, file=out)
+            print(",".join(h_row), file=out)
             print("\n".join(",".join(r) for r in rows), file=out)
 
     if "index2" in h_row:
@@ -181,7 +217,7 @@ def hamming_set(index: str, d: int = 1, include_N: bool = True):
     return h_set
 
 
-def hamming_conflict(indexes: typing.Sequence[str], max_dist: int = 1):
+def hamming_conflict(indexes: Sequence[str], max_dist: int = 1):
     """Given a sequence of indexes, return True if any are within ``max_dist``
     of each other."""
 

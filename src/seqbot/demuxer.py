@@ -131,13 +131,17 @@ def demux_run(seq_dir: pathlib.Path):
     ]
 
     if cellranger:
-        if cellranger not in (2, 3, "VDJ"):
+        if cellranger not in (2, 3, "VDJ", "SR"):
             log.error("Unknown cellranger version, skipping")
             return False
 
+        if cellranger == "SR":
+            demux_cmd.append("--use-bases-mask=Y*,I*,I*,Y*")
+        else:
+            demux_cmd.append("--use-bases-mask=Y*,I*,Y*")
+
         demux_cmd.extend(
             [
-                "--use-bases-mask=Y*,I*,Y*",
                 "--create-fastq-for-index-reads",
                 "--minimum-trimmed-read-length=8",
                 "--mask-short-adapter-reads=8",
